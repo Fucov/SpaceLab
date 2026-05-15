@@ -150,9 +150,21 @@ export interface ChatMessage {
 export interface DocumentItem {
   id: string
   name: string
-  status: 'processing' | 'processed' | 'error'
+  status: 'pending' | 'processing' | 'preprocessed' | 'processed' | 'error'
   uploadTime: string
   size: string
+  /** 文件路径（真实 API 才有） */
+  filePath?: string
+  /** 内容摘要（真实 API 返回） */
+  contentSummary?: string
+  /** 内容长度（真实 API 返回） */
+  contentLength?: number
+  /** 分块数量（真实 API 返回） */
+  chunksCount?: number
+  /** 错误信息（真实 API 返回） */
+  errorMsg?: string
+  /** 创建时间 */
+  createdAt?: string
 }
 
 /**

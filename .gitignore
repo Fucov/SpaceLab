@@ -82,3 +82,4 @@ memory-bank
 # Claude Code
 CLAUDE.md
 logs
+*.pid
