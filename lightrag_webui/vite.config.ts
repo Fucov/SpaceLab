@@ -44,20 +44,37 @@ export default defineConfig(({ mode }) => {
       }
     },
     server: {
-      proxy: env.VITE_API_PROXY === 'true' && env.VITE_API_ENDPOINTS ?
-        Object.fromEntries(
-          env.VITE_API_ENDPOINTS.split(',').map(endpoint => [
-            endpoint,
-            {
-              target: env.VITE_BACKEND_URL || 'http://localhost:9621',
-              changeOrigin: true,
-              rewrite: endpoint === '/api' ?
-                (p: string) => p.replace(/^\/api/, '') :
-                endpoint === '/docs' || endpoint === '/redoc' || endpoint === '/openapi.json' || endpoint === '/static' ?
-                  (p: string) => p : undefined
-            }
-          ])
-        ) : {}
+      proxy: {
+        '/api': {
+          target: 'http://localhost:9621',
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/api/, ''),
+        },
+        '/auth-status': {
+          target: 'http://localhost:9621',
+          changeOrigin: true,
+        },
+        '/query': {
+          target: 'http://localhost:9621',
+          changeOrigin: true,
+        },
+        '/documents': {
+          target: 'http://localhost:9621',
+          changeOrigin: true,
+        },
+        '/graph': {
+          target: 'http://localhost:9621',
+          changeOrigin: true,
+        },
+        '/health': {
+          target: 'http://localhost:9621',
+          changeOrigin: true,
+        },
+        '/login': {
+          target: 'http://localhost:9621',
+          changeOrigin: true,
+        },
+      }
     }
   }
 })

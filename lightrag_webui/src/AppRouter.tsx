@@ -7,6 +7,9 @@ import { Toaster } from 'sonner'
 import App from './App'
 import LoginPage from '@/features/LoginPage'
 import ThemeProvider from '@/components/ThemeProvider'
+import SpaceLabDemo from '@/features/spacelab/SpaceLabDemo'
+import SpaceLabApp from '@/features/spacelab/SpaceLabApp'
+import TabletApp from '@/features/spacelab/TabletApp'
 
 const AppContent = () => {
   const [initializing, setInitializing] = useState(true)
@@ -53,7 +56,7 @@ const AppContent = () => {
   useEffect(() => {
     if (!initializing && !isAuthenticated) {
       const currentPath = window.location.hash.slice(1);
-      if (currentPath !== '/login') {
+      if (currentPath !== '/login' && !currentPath.startsWith('/spacelab')) {
         console.log('Not authenticated, redirecting to login');
         navigate('/login');
       }
@@ -68,6 +71,9 @@ const AppContent = () => {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/spacelab" element={<SpaceLabDemo />} />
+      <Route path="/spacelab/main" element={<SpaceLabApp />} />
+      <Route path="/spacelab/tablet" element={<TabletApp />} />
       <Route
         path="/*"
         element={isAuthenticated ? <App /> : null}
