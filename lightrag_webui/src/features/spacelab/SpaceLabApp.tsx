@@ -1,10 +1,18 @@
+/**
+ * 大屏主控应用（SpaceLabOS 演示大屏）
+ *
+ * 布局说明（重构后）：
+ * 左侧（20%）：算力池 + 智能体调度中心（ComputePanel） + 监控日志（AlertLog）
+ * 中央（58%）：实验舱阵列矩阵 / 舱体详情（LabModuleGrid / LabModuleDetail）
+ * 右侧（22%）：全站环境参数 + 全局资源仲裁（EquipmentPanel）
+ */
+
 import { useNavigate } from 'react-router-dom'
 import { useSpaceLabStore } from './store'
 import ComputePanel from './mainScreen/ComputePanel'
 import AlertLog from './mainScreen/AlertLog'
 import LabModuleGrid from './mainScreen/LabModuleGrid'
 import LabModuleDetail from './mainScreen/LabModuleDetail'
-import GlobalParams from './mainScreen/GlobalParams'
 import EquipmentPanel from './mainScreen/EquipmentPanel'
 import { ArrowLeftIcon, MonitorIcon } from 'lucide-react'
 
@@ -15,10 +23,10 @@ export default function SpaceLabApp() {
   return (
     <div
       className="fixed inset-0 flex flex-col overflow-hidden"
-      style={{ background: 'linear-gradient(180deg, #050a18 0%, #0a1628 50%, #060d1f 100%)' }}
+      style={{ background: 'linear-gradient(180deg, #050B14 0%, #0a1628 50%, #060d1f 100%)' }}
     >
-      {/* Top bar */}
-      <header className="flex h-10 shrink-0 items-center justify-between border-b border-blue-500/15 bg-blue-950/40 px-4 backdrop-blur">
+      {/* 顶部导航栏 */}
+      <header className="flex h-9 shrink-0 items-center justify-between border-b border-blue-500/15 bg-blue-950/40 px-4 backdrop-blur">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/spacelab')}
@@ -40,20 +48,23 @@ export default function SpaceLabApp() {
         </div>
       </header>
 
-      {/* Main content - 3 column layout */}
+      {/* 主内容区 - 三栏布局 */}
       <div className="flex flex-1 min-h-0 gap-px bg-blue-500/5">
-        {/* Left column - 25% */}
-        <div className="flex w-[25%] min-w-[240px] flex-col gap-px">
-          <div className="flex-1 overflow-hidden border-r border-blue-500/10 bg-blue-950/20 p-3">
+        {/* ========== 左侧栏（20%） ========== */}
+        <div className="flex w-[20%] min-w-[200px] flex-col gap-px">
+          {/* 算力池 + 智能体调度中心 */}
+          <div className="flex-1 overflow-hidden border-r border-blue-500/10 bg-blue-950/20 p-2.5">
             <ComputePanel />
           </div>
-          <div className="flex-1 overflow-hidden border-r border-t border-blue-500/10 bg-blue-950/20 p-3 flex flex-col min-h-0">
+          {/* 监控日志 */}
+          <div className="flex-1 overflow-hidden border-r border-t border-blue-500/10 bg-blue-950/20 p-2.5 flex flex-col min-h-0">
             <AlertLog />
           </div>
         </div>
 
-        {/* Center column - 50% */}
-        <div className="flex-1 overflow-hidden bg-blue-950/10 p-3">
+        {/* ========== 中央栏（58%） ========== */}
+        <div className="flex-1 overflow-hidden bg-blue-950/10 p-2.5">
+          {/* 标题栏 */}
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-xs font-semibold tracking-wider text-blue-400/80 uppercase">
               实验舱阵列
@@ -73,12 +84,9 @@ export default function SpaceLabApp() {
           {selectedModuleId ? <LabModuleDetail /> : <LabModuleGrid />}
         </div>
 
-        {/* Right column - 25% */}
-        <div className="flex w-[25%] min-w-[240px] flex-col gap-px">
-          <div className="flex-1 overflow-hidden border-l border-blue-500/10 bg-blue-950/20 p-3">
-            <GlobalParams />
-          </div>
-          <div className="flex-1 overflow-hidden border-l border-t border-blue-500/10 bg-blue-950/20 p-3">
+        {/* ========== 右侧栏（22%） ========== */}
+        <div className="flex w-[22%] min-w-[220px] flex-col gap-px">
+          <div className="flex-1 overflow-hidden border-l border-blue-500/10 bg-blue-950/20 p-2.5">
             <EquipmentPanel />
           </div>
         </div>

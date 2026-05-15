@@ -5,7 +5,7 @@ export default function MacroData() {
   const labModules = useSpaceLabStore((s) => s.labModules)
   const runningCount = labModules.filter((m) => m.status === 'running').length
 
-  const temp = globalParams.find((p) => p.label === '舱内温度')
+  const temp = globalParams.find((p: { label: string }) => p.label === '舱内温度')
 
   return (
     <div className="flex gap-3">
