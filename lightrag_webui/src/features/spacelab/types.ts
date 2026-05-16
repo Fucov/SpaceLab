@@ -64,6 +64,27 @@ export interface HistoryExperiment {
   temperatureHistory?: number[]
   /** 历史数据采集时间戳 */
   historyTimestamps?: string[]
+  /** 多组实验数据（新增） */
+  dataGroups?: ExperimentDataGroup[]
+  /** 数据链接（新增） */
+  dataUrl?: string
+  /** 实验报告链接 */
+  reportUrl?: string
+}
+
+/** 单组实验数据（新增） */
+export interface ExperimentDataGroup {
+  id: string
+  label: string
+  description: string
+  /** 数据类型 */
+  type: 'temperature' | 'pressure' | 'particle_size' | 'spectral' | 'image' | 'multi'
+  data: number[]
+  timestamps?: string[]
+  /** 附加元数据 */
+  metadata?: Record<string, string | number>
+  /** 可视化颜色 */
+  color?: string
 }
 
 export interface AlertLogEntry {
@@ -90,9 +111,9 @@ export interface ComputePoolMetrics {
 
 /** 智能体调度中心指标 */
 export interface AgentMetrics {
-  llmTokenRate: number        // token/s 消耗速率
-  concurrentTasks: number     // 当前并发任务数
-  inferenceLatencyMs: number // 推理延迟 ms
+  llmTokenRate: number
+  concurrentTasks: number
+  inferenceLatencyMs: number
   activeResourceLocks: ResourceLock[]
 }
 
@@ -140,12 +161,62 @@ export interface AllocationTarget {
   color: string
 }
 
+/**
+ * ============================================================
+ * 多会话对话系统类型
+ * ============================================================
+ */
+
+/** 对话消息 */
 export interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: string
+  /** 流式输出时的内容是否已完成 */
+  done?: boolean
 }
+
+/** 对话版本快照 */
+export interface ConversationVersion {
+  id: string
+  label: string
+  timestamp: string
+  messageCount: number
+  /** 版本创建时的消息内容 */
+  messages: ChatMessage[]
+}
+
+/** 会话类型 */
+export type ConversationKind = 'experiment' | 'knowledge' | 'system'
+
+/** 对话会话 */
+export interface Conversation {
+  id: string
+  title: string
+  kind: ConversationKind
+  createdAt: string
+  updatedAt: string
+  messages: ChatMessage[]
+  versions: ConversationVersion[]
+  currentVersionIndex: number
+  /** 实验会话：关联的舱体 ID */
+  linkedModuleId?: string
+  /** 实验会话：当前监控状态 */
+  experimentStatus?: 'designing' | 'pending' | 'running' | 'paused' | 'completed' | 'failed'
+  /** 实验会话：DAG 设计步骤 */
+  experimentSteps?: DagStep[]
+  /** 实验会话：草稿参数（可编辑） */
+  draftParams?: ExecutionParams | null
+  /** 是否已锁定（实验进行中不允许关闭） */
+  locked?: boolean
+}
+
+/**
+ * ============================================================
+ * 文档管理类型
+ * ============================================================
+ */
 
 export interface DocumentItem {
   id: string
@@ -153,17 +224,11 @@ export interface DocumentItem {
   status: 'pending' | 'processing' | 'preprocessed' | 'processed' | 'error'
   uploadTime: string
   size: string
-  /** 文件路径（真实 API 才有） */
   filePath?: string
-  /** 内容摘要（真实 API 返回） */
   contentSummary?: string
-  /** 内容长度（真实 API 返回） */
   contentLength?: number
-  /** 分块数量（真实 API 返回） */
   chunksCount?: number
-  /** 错误信息（真实 API 返回） */
   errorMsg?: string
-  /** 创建时间 */
   createdAt?: string
 }
 
@@ -176,35 +241,24 @@ export interface DocumentItem {
 /** 执行草稿参数（AI 解析后由宇航员确认） */
 export interface ExecutionParams {
   id: string
-  /** 任务名称 */
   taskName: string
-  /** 目标舱体 ID */
   targetModuleId: string
-  /** 目标舱体名称 */
   targetModuleName: string
-  /** 设备类型 */
   device: string
-  /** 设备参数列表 */
   deviceParams: DeviceParam[]
-  /** 预计执行时长 */
   estimatedDuration: string
-  /** 优先级 */
   priority: 'high' | 'medium' | 'low'
-  /** AI 解析原始文本 */
   rawText: string
-  /** 是否已授权执行 */
   authorized: boolean
-  /** 授权时间 */
   authorizedAt?: string
-  /** 授权人 */
   authorizedBy?: string
 }
 
 export interface DeviceParam {
-  key: string          // 参数名，如 "转速"
+  key: string
   value: string | number
-  unit: string         // 如 "rpm", "min", "°C"
-  editable: boolean    // 是否允许宇航员修改
+  unit: string
+  editable: boolean
 }
 
 /** 活跃任务执行追踪项 */

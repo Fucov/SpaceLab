@@ -64,6 +64,7 @@ interface SpaceLabState {
   addAlertLog: (log: AlertLogEntry) => void
   updateModuleStatus: (id: string, status: LabModule['status'], progress?: number) => void
   addChatMessage: (msg: ChatMessage) => void
+  updateChatMessage: (id: string, content: string) => void
   addDocument: (doc: DocumentItem) => void
   removeDocument: (id: string) => void
   updateDocumentStatus: (id: string, status: DocumentItem['status']) => void
@@ -159,6 +160,13 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
   addChatMessage: (msg) =>
     set((state) => ({
       chatMessages: [...state.chatMessages, msg],
+    })),
+
+  updateChatMessage: (id, content) =>
+    set((state) => ({
+      chatMessages: state.chatMessages.map((m) =>
+        m.id === id ? { ...m, content } : m
+      ),
     })),
 
   addDocument: (doc) =>

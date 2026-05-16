@@ -4,6 +4,163 @@
 
 SpaceLab 是 LightRAG WebUI 中嵌入的 **AstroAgent OS** 双屏演示系统，包含：
 - **大屏主控** (`SpaceLabApp`)：高信息密度监控界面
+- **平板终端** (`TabletApp`)：HITL (Human-in-the-Loop) 多会话智能助手
+
+---
+
+## 文件结构
+
+```
+features/spacelab/
+├── SpaceLabDemo.tsx      # 入口页面：星空粒子背景 + 导航按钮
+├── SpaceLabApp.tsx       # 大屏主控：三栏布局（算力+阵列表/详情+仲裁）
+├── TabletApp.tsx         # 平板终端：多会话标签+对话+底部输入框（完整重写）
+├── conversationStore.ts   # 多会话状态管理（版本快照、回退、流式消息）
+├── AgentComponents.tsx    # 实验DAG可视化 + 执行草稿（可折叠）
+├── ExperimentResultViewer.tsx  # 多组工程图表查看器（Modal）
+├── DocumentPanel.tsx     # 顶部工具栏按钮 + 文档管理 Modal
+├── MarkdownRenderer.tsx  # Markdown/HTML 渲染（代码高亮、表格、链接）
+├── README.md              # 本文档
+├── types.ts              # 核心类型（Conversation/ExperimentData/Version等）
+├── store.ts              # 全局状态（舱体数据、告警、大屏状态）
+├── mockData.ts           # 真实太空实验数据（5舱、多组实验结果）
+└── mainScreen/
+    ├── ComputePanel.tsx
+    ├── AlertLog.tsx
+    ├── LabModuleGrid.tsx
+    ├── LabModuleDetail.tsx
+    └── EquipmentPanel.tsx
+```
+
+---
+
+## 核心类型 (`types.ts`)
+
+### 多会话对话系统
+
+```typescript
+interface Conversation {
+  id: string
+  title: string
+  kind: 'experiment' | 'knowledge' | 'system'
+  linkedModuleId?: string   // 实验会话关联的舱体
+  experimentStatus?: 'designing' | 'pending' | 'running' | 'paused' | 'completed' | 'failed'
+  experimentSteps?: DagStep[]   // 实验会话：设计的步骤
+  draftParams?: ExecutionParams  // 草稿参数（可编辑）
+  locked?: boolean          // 锁定：实验进行中不允许关闭
+  messages: ChatMessage[]
+  versions: ConversationVersion[]  // 版本快照列表
+  currentVersionIndex: number
+}
+```
+
+### 多组实验数据
+
+```typescript
+interface ExperimentDataGroup {
+  id: string
+  label: string            // 如 "实验组(μG)"
+  description: string
+  type: 'temperature' | 'pressure' | 'particle_size' | 'spectral' | 'multi'
+  data: number[]            // 数据点
+  timestamps?: string[]    // X轴标签
+  metadata?: Record<string, string | number>
+  color?: string
+}
+```
+
+---
+
+## 会话状态管理 (`conversationStore.ts`)
+
+核心设计：会话隔离，每会话有独立的聊天记录和版本快照。
+
+### 核心 Actions
+
+| Action | 说明 |
+|--------|------|
+| `createConversation(kind, title, linkedModuleId)` | 新建会话（实验/知识） |
+| `addMessage(convId, msg)` | 添加消息 |
+| `appendStreamingContent(convId, msgId, chunk)` | 流式增量追加 |
+| `createVersion(convId, label)` | 创建版本快照 |
+| `rollbackToVersion(convId, versionId)` | 回退到指定版本 |
+| `setExperimentSteps(convId, steps)` | 更新实验 DAG 步骤 |
+| `setDraftParams(convId, draft)` | 设置执行草稿 |
+
+---
+
+## LLM 问答流程（平板端）
+
+```
+用户发送消息
+    ↓
+创建版本快照（发送前）
+    ↓
+addMessage(userMsg) → 显示用户消息
+    ↓
+queryTextStream({ mode: "mix", stream: true })
+    ↓
+流式追加到 assistant 消息（appendStreamingContent）
+    ↓
+实验会话：自动解析意图 → setExperimentSteps → DAG 嵌入消息
+    ↓
+用户可在消息下方看到执行草稿（可折叠、修改参数、授权执行）
+    ↓
+授权后：告警日志 + 大屏 DAG 响应
+```
+
+---
+
+## 已完成实验数据查看流程
+
+```
+用户发送："查看燃烧实验数据" 或 "查看历史"
+    ↓
+找到对应舱体的 history[0]
+    ↓
+ExperimentResultViewer Modal 展开
+    ↓
+多组数据对比图（Recharts）
+    ↓
+点击"原始数据" / "实验报告" 链接跳转到 tiankong-station.cn
+```
+
+**数据组类型**：
+- `temperature`：温度/时间折线图
+- `pressure`：压力变化柱状图
+- `particle_size`：粒子/粒径分布柱状图
+- `spectral`：光谱面积图
+- `multi`：多组对比折线图
+
+---
+
+## API 接口
+
+```typescript
+// 查询（平板 LLM 问答）
+import { queryTextStream } from '@/api/lightrag'
+await queryTextStream(
+  { query, mode: 'mix', stream: true, top_k: 10 },
+  (chunk) => { fullContent += chunk; updateMessage(id, fullContent) },
+  (error) => { /* 错误处理 */ }
+)
+
+// 文档上传/管理
+import { batchUploadDocuments, deleteDocuments, getDocumentsPaginated } from '@/api/lightrag'
+```
+
+---
+
+## 已知限制
+
+1. LLM 需要 LightRAG 服务在端口 9621 启动
+2. DAG 拓扑为预计算层次布局，复杂环形依赖暂不支持
+3. 实验执行模拟了意图解析，真实场景需接入工控 API
+
+## 概述
+
+SpaceLab 是 LightRAG WebUI 中嵌入的 **AstroAgent OS** 双屏演示系统，包含：
+- **大屏主控** (`SpaceLabApp`)：高信息密度监控界面
 - **平板终端** (`TabletApp`)：HITL (Human-in-the-Loop) 人工介入交互界面
 
 ---
@@ -15,10 +172,10 @@ features/spacelab/
 ├── SpaceLabDemo.tsx     # 入口页面：星空粒子背景 + 导航按钮
 ├── SpaceLabApp.tsx      # 大屏主控：三栏布局（算力+阵列表/详情+仲裁）
 ├── TabletApp.tsx        # 平板终端：任务追踪+执行草稿箱+AI助手（内联所有子组件）
-├── DocumentUpload.tsx   # 平板文档上传组件（调用 POST /documents/upload）
+├── DocumentPanel.tsx    # 文档管理：顶部 UploadButton + 完整管理 Modal 浮层
 ├── README.md            # 本文档
 ├── types.ts            # 核心 TypeScript 类型定义（DAG/草稿/指标等）
-├── store.ts            # Zustand 全局状态管理（含 HITL 授权流程）
+├── store.ts           # Zustand 全局状态管理（含 HITL 授权流程）
 ├── mockData.ts         # 模拟数据（6个实验舱+告警+指标）
 └── mainScreen/
     ├── ComputePanel.tsx       # 大屏左侧：核心算力池 + 智能体调度中心
@@ -153,18 +310,23 @@ await batchUploadDocuments(files, (filename, percent) => {
 import { scanNewDocuments } from '@/api/lightrag'
 const { track_id } = await scanNewDocuments()
 
-// 获取文档列表
-import { getDocuments } from '@/api/lightrag'
-const { statuses } = await getDocuments()
-// statuses: { pending, processing, preprocessed, processed, failed }
-
-// 插入纯文本
-import { insertText, insertTexts } from '@/api/lightrag'
-await insertText("实验数据内容...")
+// 获取文档列表（支持分页）
+import { getDocumentsPaginated } from '@/api/lightrag'
+const { documents, pagination } = await getDocumentsPaginated({
+  page: 1,
+  page_size: 50,
+  sort_field: 'created_at',
+  sort_direction: 'desc',
+})
+// documents: { id, file_path, content_summary, content_length, status, chunks_count, created_at, ... }
 
 // 删除文档
 import { deleteDocuments } from '@/api/lightrag'
 await deleteDocuments(['doc-id-1', 'doc-id-2'], deleteFile=true, deleteLLMCache=true)
+
+// 插入纯文本
+import { insertText, insertTexts } from '@/api/lightrag'
+await insertText("实验数据内容...")
 ```
 
 ### 2. RAG 查询

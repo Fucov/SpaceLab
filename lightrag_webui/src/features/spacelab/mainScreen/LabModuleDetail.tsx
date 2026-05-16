@@ -94,19 +94,19 @@ function computeDagLayout(steps: DagStep[]): { nodes: DagNode[]; svgW: number; s
   return { nodes, svgW, svgH }
 }
 
-/** 节点颜色方案 */
+/** 节点颜色方案（简洁柔和） */
 function nodeColors(step: DagStep) {
   switch (step.status) {
     case 'completed':
-      return { bg: '#064e3b', border: '#10b981', text: '#6ee7b7', glow: 'rgba(16,185,129,0.2)' }
+      return { bg: '#1e293b', border: '#475569', text: '#94a3b8' }
     case 'running':
-      return { bg: '#0c4a6e', border: '#22d3ee', text: '#a5f3fc', glow: 'rgba(34,211,238,0.3)' }
+      return { bg: '#1e3a5f', border: '#3b82f6', text: '#93c5fd' }
     case 'error':
-      return { bg: '#450a0a', border: '#ef4444', text: '#fca5a5', glow: 'rgba(239,68,68,0.3)' }
+      return { bg: '#3b1a1a', border: '#dc2626', text: '#fca5a5' }
     case 'waiting_resource':
-      return { bg: '#451a03', border: '#f59e0b', text: '#fcd34d', glow: 'rgba(245,158,11,0.3)' }
+      return { bg: '#3b2a1a', border: '#d97706', text: '#fcd34d' }
     default:
-      return { bg: '#0f172a', border: '#334155', text: '#94a3b8', glow: 'transparent' }
+      return { bg: '#111827', border: '#374151', text: '#6b7280' }
   }
 }
 
@@ -163,18 +163,11 @@ function DagSvg({ steps }: { steps: DagStep[] }) {
       >
         <defs>
           <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-            <polygon points="0 0, 8 3, 0 6" fill="#334155" />
+            <polygon points="0 0, 8 3, 0 6" fill="#475569" />
           </marker>
           <marker id="arrowhead-active" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-            <polygon points="0 0, 8 3, 0 6" fill="#22d3ee" />
+            <polygon points="0 0, 8 3, 0 6" fill="#3b82f6" />
           </marker>
-          <filter id="glow">
-            <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-            <feMerge>
-              <feMergeNode in="coloredBlur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
 
         {/* 连接线 */}
@@ -186,7 +179,7 @@ function DagSvg({ steps }: { steps: DagStep[] }) {
               key={i}
               d={path}
               fill="none"
-              stroke={e.completed ? '#10b981' : '#334155'}
+              stroke={e.completed ? '#475569' : '#374151'}
               strokeWidth={e.completed ? 1.5 : 1}
               strokeDasharray={e.completed ? undefined : '4 3'}
               opacity={e.completed ? 0.8 : 0.4}
@@ -205,17 +198,6 @@ function DagSvg({ steps }: { steps: DagStep[] }) {
 
           return (
             <g key={step.id}>
-              {/* 发光效果（运行中节点） */}
-              {isActive && (
-                <rect
-                  x={node.x - 3} y={node.y - 3}
-                  width={node.w + 6} height={node.h + 6}
-                  rx="8" ry="8"
-                  fill={colors.glow}
-                  filter="url(#glow)"
-                />
-              )}
-
               {/* 节点主体 */}
               <rect
                 x={node.x} y={node.y}
@@ -265,14 +247,14 @@ function DagSvg({ steps }: { steps: DagStep[] }) {
               {/* 运行中动画点 */}
               {step.status === 'running' && (
                 <>
-                  <circle cx={node.x + node.w / 2} cy={node.y + node.h + 8} r="2.5" fill="#22d3ee">
-                    <animate attributeName="opacity" values="1;0.2;1" dur="1s" repeatCount="indefinite" />
+                  <circle cx={node.x + node.w / 2} cy={node.y + node.h + 8} r="2" fill="#3b82f6">
+                    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite" />
                   </circle>
-                  <circle cx={node.x + node.w / 2 - 7} cy={node.y + node.h + 8} r="2" fill="#22d3ee">
-                    <animate attributeName="opacity" values="1;0.2;1" dur="1s" begin="0.3s" repeatCount="indefinite" />
+                  <circle cx={node.x + node.w / 2 - 7} cy={node.y + node.h + 8} r="1.5" fill="#3b82f6">
+                    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" begin="0.5s" repeatCount="indefinite" />
                   </circle>
-                  <circle cx={node.x + node.w / 2 + 7} cy={node.y + node.h + 8} r="2" fill="#22d3ee">
-                    <animate attributeName="opacity" values="1;0.2;1" dur="1s" begin="0.6s" repeatCount="indefinite" />
+                  <circle cx={node.x + node.w / 2 + 7} cy={node.y + node.h + 8} r="1.5" fill="#3b82f6">
+                    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" begin="1s" repeatCount="indefinite" />
                   </circle>
                 </>
               )}
@@ -323,7 +305,7 @@ function HistoryChart({ history }: { history: HistoryExperiment }) {
     for (let i = 0; i <= gridCount; i++) {
       const y = PAD.top + (i / gridCount) * chartH
       const val = maxT - (i / gridCount) * (maxT - minT)
-      ctx.strokeStyle = 'rgba(59,130,246,0.08)'
+      ctx.strokeStyle = 'rgba(148,163,184,0.06)'
       ctx.lineWidth = 0.5
       ctx.beginPath()
       ctx.moveTo(PAD.left, y)
