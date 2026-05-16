@@ -416,10 +416,16 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             data = result.get("data", {})
             references = data.get("references", [])
 
-            # Get the non-streaming response content
-            response_content = llm_response.get("content", "")
-            if not response_content:
-                response_content = "No relevant context found for the query."
+            # Check for error status first - provides more informative feedback
+            error_message = result.get("message", "")
+            if result.get("status") == "failure" and error_message:
+                # Embedding/LLM service errors should surface clearly, not as "no context"
+                response_content = f"[检索失败] {error_message}\n\n请检查：\n1. 服务器日志 (lightrag.log) 中的具体错误\n2. Embedding/LLM API Key 是否有效\n3. 相关服务是否可访问"
+            else:
+                # Get the non-streaming response content
+                response_content = llm_response.get("content") or ""
+                if not response_content:
+                    response_content = "No relevant context found for the query."
 
             # Enrich references with chunk content if requested
             if request.include_references and request.include_chunk_content:
@@ -714,9 +720,15 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                             yield f"{json.dumps({'error': str(e)})}\n"
                 else:
                     # Non-streaming mode: send complete response in one message
-                    response_content = llm_response.get("content", "")
-                    if not response_content:
-                        response_content = "No relevant context found for the query."
+                    # Check for error status first
+                    error_message = result.get("message", "")
+                    if result.get("status") == "failure" and error_message:
+                        # Embedding/LLM service errors should surface clearly
+                        response_content = f"[检索失败] {error_message}\n\n请检查：\n1. 服务器日志 (lightrag.log) 中的具体错误\n2. Embedding/LLM API Key 是否有效\n3. 相关服务是否可访问"
+                    else:
+                        response_content = llm_response.get("content") or ""
+                        if not response_content:
+                            response_content = "No relevant context found for the query."
 
                     # Create complete response object
                     complete_response = {"response": response_content}

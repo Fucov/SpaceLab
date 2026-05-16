@@ -1,49 +1,43 @@
 /**
- * 大屏中央 - 舱体详情与 DAG 图（深度重构）
+ * 大屏中央 - 舱体详情与 DAG 图
  *
- * 重构说明：
- * 1. 真正的非线性 DAG 渲染（Canvas）：支持并行分支拓扑、汇聚节点
- * 2. 节点上标注资源锁类型（physical/LLM），用不同颜色区分
- * 3. 历史实验视图：点击历史记录展开模拟温度折线图 + 关键结果日志
- * 4. 右侧 DAG 节点交互高亮
- *
- * 状态联动流程：
- * 平板授权执行 -> store.authorizeDraft() -> labModules[].dagSteps 更新
- * -> 此组件订阅 labModules -> DAG SVG 自动重新渲染
+ * 设计：清晰的横向层次布局、标签对比度高、历史实验可点击查看完整图表
  */
 
 import { useSpaceLabStore } from '../store'
-import { useMemo, useRef, useEffect } from 'react'
+import { useMemo } from 'react'
 import type { LabModule, DagStep, HistoryExperiment } from '../types'
-import { ArrowLeftIcon, Activity, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeftIcon, BarChart3, ChevronDown, ChevronUp, ExternalLink, FileText } from 'lucide-react'
+import ExperimentResultViewer from '../ExperimentResultViewer'
 
-// ============================================================
-// 子组件 1：实时传感器网格
-// ============================================================
+// ================================================================
+// 子组件 1：传感器网格
+// ================================================================
+
 function SensorGrid({ module }: { module: LabModule }) {
   const sensors = [
-    { label: '温度', value: module.temperature.toFixed(1), unit: '°C', color: '#f59e0b' },
-    { label: 'CO₂', value: (module.co2 * 100).toFixed(2), unit: '%', color: '#8b5cf6' },
-    { label: '湿度', value: module.humidity.toFixed(1), unit: '%', color: '#06b6d4' },
-    { label: '气压', value: module.pressure.toFixed(1), unit: 'kPa', color: '#3b82f6' },
-    { label: '功率', value: module.power.toFixed(0), unit: 'W', color: '#fbbf24' },
+    { label: '温度', value: module.temperature.toFixed(1), unit: '°C', color: '#fbbf24' },
+    { label: 'CO₂', value: (module.co2 * 100).toFixed(2), unit: '%', color: '#a78bfa' },
+    { label: '湿度', value: module.humidity.toFixed(1), unit: '%', color: '#22d3ee' },
+    { label: '气压', value: module.pressure.toFixed(1), unit: 'kPa', color: '#34d399' },
+    { label: '功率', value: `${module.power}W`, unit: '', color: '#fb923c' },
   ]
   return (
     <div className="grid grid-cols-5 gap-1.5">
       {sensors.map((s) => (
-        <div key={s.label} className="rounded border border-blue-500/10 bg-blue-950/30 p-2 text-center">
-          <div className="text-[8px] text-blue-400/40 mb-0.5">{s.label}</div>
-          <div className="text-base font-bold font-mono" style={{ color: s.color }}>{s.value}</div>
-          <div className="text-[8px] text-blue-400/25">{s.unit}</div>
+        <div key={s.label} className="rounded border border-white/10 bg-black/30 p-2 text-center">
+          <div className="text-[9px] text-white/40 mb-0.5">{s.label}</div>
+          <div className="text-base font-bold font-mono leading-tight" style={{ color: s.color }}>{s.value}</div>
+          {s.unit && <div className="text-[8px] text-white/30 mt-0.5">{s.unit}</div>}
         </div>
       ))}
     </div>
   )
 }
 
-// ============================================================
-// 子组件 2：真正的非线性 DAG 渲染（SVG）
-// ============================================================
+// ================================================================
+// 子组件 2：DAG 横向流程图
+// ================================================================
 
 interface DagNode {
   step: DagStep
@@ -53,40 +47,34 @@ interface DagNode {
   h: number
 }
 
-/** 计算 DAG 拓扑布局（层次布局，支持并行分支） */
-function computeDagLayout(steps: DagStep[]): { nodes: DagNode[]; svgW: number; svgH: number } {
-  const NODE_W = 120
-  const NODE_H = 40
-  const NODE_GAP = 20
-  const GROUP_GAP_X = 80
-  const PADDING = 16
+const NODE_W = 120
+const NODE_H = 36
+const NODE_GAP = 14
+const GROUP_GAP_X = 72
+const DAG_PAD = 12
 
-  // 按 parallelGroup 分组
-  const groups: DagStep[][] = []
-  const groupMap = new Map<number, number>()
+function computeDagLayout(steps: DagStep[]) {
+  const groupMap = new Map<number, DagStep[]>()
   steps.forEach((step) => {
     const g = step.parallelGroup ?? 0
-    if (!groupMap.has(g)) {
-      groupMap.set(g, groups.length)
-      groups.push([])
-    }
-    const groupIdx = groupMap.get(g)!
-    groups[groupIdx].push(step)
+    if (!groupMap.has(g)) groupMap.set(g, [])
+    groupMap.get(g)!.push(step)
   })
+  const sortedGroups = [...groupMap.entries()].sort((a, b) => a[0] - b[0])
 
-  const svgH = groups.reduce((max, group) => {
-    return Math.max(max, group.length * (NODE_H + NODE_GAP))
-  }, 0) + PADDING * 2
-
-  const svgW = groups.length * (NODE_W + GROUP_GAP_X) + PADDING * 2
+  // SVG 高度 = 最大组的高度
+  const maxGroupH = sortedGroups.reduce((max, [, group]) =>
+    Math.max(max, group.length * (NODE_H + NODE_GAP) - NODE_GAP), 0)
+  const svgH = maxGroupH + DAG_PAD * 2
+  const svgW = sortedGroups.length * (NODE_W + GROUP_GAP_X) + DAG_PAD * 2
 
   const nodes: DagNode[] = []
-
-  groups.forEach((group, gi) => {
-    const gx = PADDING + gi * (NODE_W + GROUP_GAP_X)
-    const groupH = group.length * (NODE_H + NODE_GAP)
+  sortedGroups.forEach(([, group], gi) => {
+    const gx = DAG_PAD + gi * (NODE_W + GROUP_GAP_X)
+    const totalGroupH = group.length * (NODE_H + NODE_GAP) - NODE_GAP
+    const startY = DAG_PAD + (maxGroupH - totalGroupH) / 2
     group.forEach((step, si) => {
-      const gy = PADDING + (svgH - groupH) / 2 + si * (NODE_H + NODE_GAP)
+      const gy = startY + si * (NODE_H + NODE_GAP)
       nodes.push({ step, x: gx, y: gy, w: NODE_W, h: NODE_H })
     })
   })
@@ -94,176 +82,110 @@ function computeDagLayout(steps: DagStep[]): { nodes: DagNode[]; svgW: number; s
   return { nodes, svgW, svgH }
 }
 
-/** 节点颜色方案（简洁柔和） */
-function nodeColors(step: DagStep) {
+const DAG_COLORS = {
+  completed:        { bg: '#1a2744', border: '#3b5998', text: '#c8d8f0', dot: '#5b8cd4' },
+  running:          { bg: '#1a2d5a', border: '#3b82f6', text: '#93c5fd', dot: '#60a5fa' },
+  error:            { bg: '#3b1a1a', border: '#dc2626', text: '#fca5a5', dot: '#f87171' },
+  waiting_resource: { bg: '#3b2a1a', border: '#d97706', text: '#fcd34d', dot: '#fbbf24' },
+  pending:          { bg: '#0f172a', border: '#334155', text: '#94a3b8', dot: '#64748b' },
+}
+
+function statusText(step: DagStep) {
   switch (step.status) {
-    case 'completed':
-      return { bg: '#1e293b', border: '#475569', text: '#94a3b8' }
-    case 'running':
-      return { bg: '#1e3a5f', border: '#3b82f6', text: '#93c5fd' }
-    case 'error':
-      return { bg: '#3b1a1a', border: '#dc2626', text: '#fca5a5' }
-    case 'waiting_resource':
-      return { bg: '#3b2a1a', border: '#d97706', text: '#fcd34d' }
-    default:
-      return { bg: '#111827', border: '#374151', text: '#6b7280' }
+    case 'running': return step.duration || '进行中'
+    case 'completed': return step.duration || '完成'
+    case 'error': return '异常'
+    case 'waiting_resource': return '等待资源'
+    default: return step.duration || '等待'
   }
 }
 
-/** SVG DAG 渲染 */
 function DagSvg({ steps }: { steps: DagStep[] }) {
-  const svgRef = useRef<SVGSVGElement>(null)
   const { nodes, svgW, svgH } = useMemo(() => computeDagLayout(steps), [steps])
 
-  // 构建组内索引映射
-  const nodeMap = useMemo(() => new Map(nodes.map((n) => [n.step.id, n])), [nodes])
+  const groupNodes = useMemo(() => {
+    const map = new Map<number, DagNode[]>()
+    nodes.forEach((n) => {
+      const g = n.step.parallelGroup ?? 0
+      if (!map.has(g)) map.set(g, [])
+      map.get(g)!.push(n)
+    })
+    return [...map.entries()].sort((a, b) => a[0] - b[0])
+  }, [nodes])
 
-  // 预计算连接线（每组最后一个节点指向下一组第一个节点）
   const edges = useMemo(() => {
     const result: { x1: number; y1: number; x2: number; y2: number; completed: boolean }[] = []
-    const stepsByGroup = new Map<number, DagStep[]>()
-    steps.forEach((s) => {
-      const g = s.parallelGroup ?? 0
-      if (!stepsByGroup.has(g)) stepsByGroup.set(g, [])
-      stepsByGroup.get(g)!.push(s)
-    })
-
-    const sortedGroups = [...stepsByGroup.entries()].sort((a, b) => a[0] - b[0])
-
-    for (let gi = 0; gi < sortedGroups.length - 1; gi++) {
-      const [, currSteps] = sortedGroups[gi]
-      const [, nextSteps] = sortedGroups[gi + 1]
-
-      // 当前组最后一个节点 -> 下一组所有节点（如果下一组有多节点则扇出）
-      const lastNode = nodeMap.get(currSteps[currSteps.length - 1].id)!
-      const cx = lastNode.x + lastNode.w
-      const cy = lastNode.y + lastNode.h / 2
-
-      nextSteps.forEach((nextStep) => {
-        const nextNode = nodeMap.get(nextStep.id)!
-        const nx = nextNode.x
-        const ny = nextNode.y + nextNode.h / 2
-
-        // 判断这条边是否已完成：当前组全部完成则边为完成状态
-        const allDone = currSteps.every((s) => s.status === 'completed')
-        result.push({ x1: cx, y1: cy, x2: nx, y2: ny, completed: allDone })
+    for (let gi = 0; gi < groupNodes.length - 1; gi++) {
+      const [, prev] = groupNodes[gi]
+      const [, next] = groupNodes[gi + 1]
+      const last = prev[prev.length - 1]
+      const first = next[0]
+      const done = prev.every((n) => n.step.status === 'completed')
+      result.push({
+        x1: last.x + last.w,
+        y1: last.y + last.h / 2,
+        x2: first.x,
+        y2: first.y + first.h / 2,
+        completed: done,
       })
     }
     return result
-  }, [steps, nodeMap])
+  }, [groupNodes])
 
   return (
-    <div className="overflow-x-auto">
-      <svg
-        ref={svgRef}
-        width={svgW}
-        height={svgH}
-        className="block"
-        style={{ minWidth: svgW }}
-      >
+    <div className="overflow-x-auto overflow-y-hidden">
+      <svg width={svgW} height={svgH} style={{ minWidth: svgW }}>
         <defs>
-          <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-            <polygon points="0 0, 8 3, 0 6" fill="#475569" />
+          <marker id="dag-arr" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+            <polygon points="0 0, 7 2.5, 0 5" fill="#475569" />
           </marker>
-          <marker id="arrowhead-active" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-            <polygon points="0 0, 8 3, 0 6" fill="#3b82f6" />
+          <marker id="dag-arr-active" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+            <polygon points="0 0, 7 2.5, 0 5" fill="#60a5fa" />
           </marker>
         </defs>
 
-        {/* 连接线 */}
-        {edges.map((e, i) => {
-          const midX = (e.x1 + e.x2) / 2
-          const path = `M ${e.x1} ${e.y1} C ${midX} ${e.y1}, ${midX} ${e.y2}, ${e.x2} ${e.y2}`
-          return (
-            <path
-              key={i}
-              d={path}
-              fill="none"
-              stroke={e.completed ? '#475569' : '#374151'}
-              strokeWidth={e.completed ? 1.5 : 1}
-              strokeDasharray={e.completed ? undefined : '4 3'}
-              opacity={e.completed ? 0.8 : 0.4}
-              markerEnd={e.completed ? 'url(#arrowhead-active)' : 'url(#arrowhead)'}
-            />
-          )
-        })}
+        {edges.map((e, i) => (
+          <line key={i}
+            x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
+            stroke={e.completed ? '#60a5fa' : '#334155'}
+            strokeWidth={e.completed ? 1.5 : 1}
+            strokeDasharray={e.completed ? undefined : '4 3'}
+            opacity={e.completed ? 0.9 : 0.4}
+            markerEnd={e.completed ? 'url(#dag-arr-active)' : 'url(#dag-arr)'}
+          />
+        ))}
 
-        {/* 节点 */}
         {nodes.map((node) => {
-          const { step } = node
-          const colors = nodeColors(step)
-          const isActive = step.isActive || step.status === 'running'
-          const cx = node.x + node.w / 2
-          const cy = node.y + node.h / 2
+          const c = DAG_COLORS[node.step.status] || DAG_COLORS.pending
+          const active = node.step.status === 'running' || node.step.status === 'waiting_resource'
 
           return (
-            <g key={step.id}>
-              {/* 节点主体 */}
+            <g key={node.step.id}>
               <rect
-                x={node.x} y={node.y}
-                width={node.w} height={node.h}
-                rx="6" ry="6"
-                fill={colors.bg}
-                stroke={colors.border}
-                strokeWidth={isActive ? 1.5 : 1}
+                x={node.x} y={node.y} width={node.w} height={node.h}
+                rx="5" ry="5"
+                fill={c.bg} stroke={c.border}
+                strokeWidth={active ? 1.5 : 1}
               />
-
-              {/* 步骤名称 */}
               <text
-                x={cx} y={cy - 2}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fill={colors.text}
-                fontSize="11"
-                fontWeight="bold"
-                fontFamily="monospace"
+                x={node.x + node.w / 2} y={node.y + node.h / 2 - 4}
+                textAnchor="middle" dominantBaseline="central"
+                fill={c.text} fontSize="10" fontWeight="600"
+                fontFamily="system-ui, sans-serif"
               >
-                {step.name}
+                {node.step.name.length > 12 ? node.step.name.slice(0, 11) + '…' : node.step.name}
               </text>
-
-              {/* 时长或状态 */}
               <text
-                x={cx} y={cy + 13}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fill={colors.text}
-                fontSize="8"
-                opacity={0.6}
-                fontFamily="monospace"
+                x={node.x + node.w / 2} y={node.y + node.h / 2 + 7}
+                textAnchor="middle" dominantBaseline="central"
+                fill={c.dot} fontSize="8" fontFamily="monospace"
               >
-                {step.duration || (step.status === 'pending' ? '等待' : step.status)}
+                {statusText(node.step)}
               </text>
-
-              {/* 资源锁标识 */}
-              {step.resourceLock && step.resourceLock !== 'none' && (
-                <g transform={`translate(${node.x + node.w - 14}, ${node.y + 4})`}>
-                  <rect x="0" y="0" width="18" height="10" rx="3" fill={step.resourceLock === 'physical' ? '#7c2d12' : '#1e3a5f'} stroke={step.resourceLock === 'physical' ? '#f59e0b' : '#3b82f6'} strokeWidth="0.5" />
-                  <text x="9" y="5.5" textAnchor="middle" dominantBaseline="central" fill={step.resourceLock === 'physical' ? '#fbbf24' : '#93c5fd'} fontSize="6" fontWeight="bold" fontFamily="monospace">
-                    {step.resourceLock === 'physical' ? 'PHY' : 'LLM'}
-                  </text>
-                </g>
-              )}
-
-              {/* 运行中动画点 */}
-              {step.status === 'running' && (
-                <>
-                  <circle cx={node.x + node.w / 2} cy={node.y + node.h + 8} r="2" fill="#3b82f6">
-                    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite" />
-                  </circle>
-                  <circle cx={node.x + node.w / 2 - 7} cy={node.y + node.h + 8} r="1.5" fill="#3b82f6">
-                    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" begin="0.5s" repeatCount="indefinite" />
-                  </circle>
-                  <circle cx={node.x + node.w / 2 + 7} cy={node.y + node.h + 8} r="1.5" fill="#3b82f6">
-                    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" begin="1s" repeatCount="indefinite" />
-                  </circle>
-                </>
-              )}
-
-              {/* 等待资源图标 */}
-              {step.status === 'waiting_resource' && (
-                <text x={node.x + 6} y={node.y + 8} fill="#f59e0b" fontSize="10">
-                  ⏳
-                </text>
+              {node.step.status === 'running' && (
+                <circle cx={node.x + node.w - 6} cy={node.y + 6} r="3" fill="#3b82f6" opacity="0.8">
+                  <animate attributeName="opacity" values="0.8;0.2;0.8" dur="1.5s" repeatCount="indefinite" />
+                </circle>
               )}
             </g>
           )
@@ -273,155 +195,71 @@ function DagSvg({ steps }: { steps: DagStep[] }) {
   )
 }
 
-// ============================================================
-// 子组件 3：历史实验温度折线图（Canvas）
-// ============================================================
-function HistoryChart({ history }: { history: HistoryExperiment }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+// ================================================================
+// 子组件 3：历史实验列表
+// ================================================================
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')!
-    const W = canvas.width
-    const H = canvas.height
-    const PAD = { top: 8, right: 8, bottom: 18, left: 32 }
-    const chartW = W - PAD.left - PAD.right
-    const chartH = H - PAD.top - PAD.bottom
+function HistoryList({ module }: { module: LabModule }) {
+  const selectHistory = useSpaceLabStore((s) => s.selectHistory)
 
-    const temps = history.temperatureHistory ?? []
-    if (temps.length < 2) return
+  if (module.history.length === 0) {
+    return <div className="text-xs text-white/30 py-2">暂无历史记录</div>
+  }
 
-    const minT = Math.min(...temps) - 1
-    const maxT = Math.max(...temps) + 1
-
-    const toX = (i: number) => PAD.left + (i / (temps.length - 1)) * chartW
-    const toY = (v: number) => PAD.top + (1 - (v - minT) / (maxT - minT)) * chartH
-
-    ctx.clearRect(0, 0, W, H)
-
-    // 网格线
-    const gridCount = 3
-    for (let i = 0; i <= gridCount; i++) {
-      const y = PAD.top + (i / gridCount) * chartH
-      const val = maxT - (i / gridCount) * (maxT - minT)
-      ctx.strokeStyle = 'rgba(148,163,184,0.06)'
-      ctx.lineWidth = 0.5
-      ctx.beginPath()
-      ctx.moveTo(PAD.left, y)
-      ctx.lineTo(PAD.left + chartW, y)
-      ctx.stroke()
-      ctx.fillStyle = 'rgba(148,163,184,0.4)'
-      ctx.font = '8px monospace'
-      ctx.textAlign = 'right'
-      ctx.fillText(`${val.toFixed(0)}°`, PAD.left - 3, y + 3)
-    }
-
-    // 渐变填充
-    const grad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top + chartH)
-    grad.addColorStop(0, 'rgba(59,130,246,0.15)')
-    grad.addColorStop(1, 'rgba(59,130,246,0.01)')
-    ctx.beginPath()
-    ctx.moveTo(toX(0), PAD.top + chartH)
-    temps.forEach((t, i) => ctx.lineTo(toX(i), toY(t)))
-    ctx.lineTo(toX(temps.length - 1), PAD.top + chartH)
-    ctx.closePath()
-    ctx.fillStyle = grad
-    ctx.fill()
-
-    // 折线
-    ctx.beginPath()
-    ctx.moveTo(toX(0), toY(temps[0]))
-    for (let i = 1; i < temps.length; i++) {
-      ctx.lineTo(toX(i), toY(temps[i]))
-    }
-    ctx.strokeStyle = '#3b82f6'
-    ctx.lineWidth = 1.5
-    ctx.stroke()
-
-    // 数据点
-    temps.forEach((t, i) => {
-      ctx.beginPath()
-      ctx.arc(toX(i), toY(t), 2, 0, Math.PI * 2)
-      ctx.fillStyle = '#3b82f6'
-      ctx.fill()
-    })
-
-    // X轴标签
-    const step = Math.max(1, Math.floor(temps.length / 5))
-    history.historyTimestamps?.forEach((ts, i) => {
-      if (i % step === 0) {
-        ctx.fillStyle = 'rgba(148,163,184,0.4)'
-        ctx.font = '7px monospace'
-        ctx.textAlign = 'center'
-        ctx.fillText(ts, toX(i), H - 4)
-      }
-    })
-  }, [history])
+  const rc = (r: HistoryExperiment['result']) =>
+    r === 'success' ? 'text-emerald-400' : r === 'failed' ? 'text-red-400' : 'text-amber-400'
 
   return (
-    <div className="relative">
-      <canvas
-        ref={canvasRef}
-        width={380}
-        height={80}
-        className="w-full rounded"
-        style={{ maxHeight: 80 }}
-      />
+    <div className="space-y-1.5">
+      {module.history.map((h) => (
+        <button
+          key={h.id}
+          onClick={() => selectHistory(h.id)}
+          className="w-full flex items-center justify-between rounded border border-white/10 bg-white/5 px-3 py-2 text-left cursor-pointer hover:bg-white/10 transition-colors"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText className="w-3.5 h-3.5 text-white/40 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-xs text-white/80 truncate">{h.name}</div>
+              <div className="text-[9px] text-white/30 mt-0.5">{h.date} · {h.dataPoints.toLocaleString()} 点</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`text-[9px] font-medium ${rc(h.result)}`}>
+              {h.result === 'success' ? '成功' : h.result === 'failed' ? '失败' : '部分'}
+            </span>
+            <ExternalLink className="w-3.5 h-3.5 text-white/30" />
+          </div>
+        </button>
+      ))}
     </div>
   )
 }
 
-// ============================================================
-// 子组件 4：历史实验列表
-// ============================================================
-function HistoryList({ module }: { module: LabModule }) {
-  const selectedHistoryId = useSpaceLabStore((s) => s.selectedHistoryId)
-  const selectHistory = useSpaceLabStore((s) => s.selectHistory)
+// ================================================================
+// 子组件 4：任务队列
+// ================================================================
 
-  if (module.history.length === 0) {
-    return <div className="text-xs text-blue-400/30 py-2">暂无历史记录</div>
+function TaskQueue({ module }: { module: LabModule }) {
+  const pc = {
+    high:   { color: 'text-red-400 bg-red-500/15', label: '高' },
+    medium: { color: 'text-amber-400 bg-amber-500/15', label: '中' },
+    low:    { color: 'text-blue-400 bg-blue-500/15', label: '低' },
   }
-
+  if (module.taskQueue.length === 0) {
+    return <div className="text-xs text-white/30 py-2">暂无排队任务</div>
+  }
   return (
     <div className="space-y-1.5">
-      {module.history.map((h) => {
-        const isSelected = selectedHistoryId === h.id
-        const resultColor = h.result === 'success' ? 'text-emerald-400' : h.result === 'failed' ? 'text-red-400' : 'text-amber-400'
+      {module.taskQueue.map((task) => {
+        const cfg = pc[task.priority]
         return (
-          <div key={h.id}>
-            <button
-              onClick={() => selectHistory(isSelected ? null : h.id)}
-              className="w-full flex items-center justify-between rounded border border-blue-500/10 bg-blue-950/20 px-3 py-2 text-left cursor-pointer hover:bg-blue-900/20 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-3 h-3 text-blue-400/40" />
-                <div>
-                  <div className="text-xs text-blue-200">{h.name}</div>
-                  <div className="text-[9px] text-blue-400/30">{h.date} · {h.dataPoints} 点</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`text-[9px] ${resultColor}`}>
-                  {h.result === 'success' ? '成功' : h.result === 'failed' ? '失败' : '部分'}
-                </span>
-                {isSelected ? <ChevronUp className="w-3 h-3 text-blue-400/50" /> : <ChevronDown className="w-3 h-3 text-blue-400/50" />}
-              </div>
-            </button>
-
-            {/* 展开：温度折线图 + 结果摘要 */}
-            {isSelected && (
-              <div className="mt-1 rounded border border-blue-500/10 bg-blue-950/15 p-2">
-                <div className="text-[9px] text-blue-400/40 mb-1 flex items-center gap-1">
-                  <Activity className="w-3 h-3" />
-                  温度变化曲线
-                </div>
-                <HistoryChart history={h} />
-                <div className="mt-1.5 text-[9px] text-blue-300/50 leading-relaxed">
-                  {h.summary}
-                </div>
-              </div>
-            )}
+          <div key={task.id} className="flex items-center justify-between rounded border border-white/10 bg-white/5 px-2.5 py-2">
+            <div>
+              <div className="text-xs text-white/80">{task.name}</div>
+              <div className="text-[9px] text-white/30 mt-0.5">负责人: {task.assignee} · {task.scheduledTime}</div>
+            </div>
+            <span className={`rounded border px-1.5 py-0.5 text-[9px] font-medium ${cfg.color}`}>{cfg.label}</span>
           </div>
         )
       })}
@@ -429,102 +267,101 @@ function HistoryList({ module }: { module: LabModule }) {
   )
 }
 
-// ============================================================
-// 子组件 5：任务队列
-// ============================================================
-function TaskQueue({ module }: { module: LabModule }) {
-  const priorityConfig = {
-    high: { color: 'text-red-400 bg-red-500/15 border-red-500/20', label: '高' },
-    medium: { color: 'text-amber-400 bg-amber-500/15 border-amber-500/20', label: '中' },
-    low: { color: 'text-blue-400 bg-blue-500/15 border-blue-500/20', label: '低' },
-  }
-  return (
-    <div className="space-y-1.5">
-      {module.taskQueue.length === 0 ? (
-        <div className="text-xs text-blue-400/30 py-2">暂无排队任务</div>
-      ) : (
-        module.taskQueue.map((task) => {
-          const pc = priorityConfig[task.priority]
-          return (
-            <div key={task.id} className="flex items-center justify-between rounded border border-blue-500/10 bg-blue-950/20 px-2.5 py-2">
-              <div>
-                <div className="text-xs text-blue-200">{task.name}</div>
-                <div className="text-[9px] text-blue-400/40 mt-0.5">负责人: {task.assignee} · {task.scheduledTime}</div>
-              </div>
-              <span className={`rounded border px-1.5 py-0.5 text-[9px] font-medium ${pc.color}`}>{pc.label}</span>
-            </div>
-          )
-        })
-      )}
-    </div>
-  )
-}
+// ================================================================
+// 主组件
+// ================================================================
 
-// ============================================================
-// 主组件：舱体详情页
-// ============================================================
 export default function LabModuleDetail() {
   const selectedId = useSpaceLabStore((s) => s.selectedModuleId)
   const labModules = useSpaceLabStore((s) => s.labModules)
   const selectModule = useSpaceLabStore((s) => s.selectModule)
+  const selectedHistoryId = useSpaceLabStore((s) => s.selectedHistoryId)
+  const selectHistory = useSpaceLabStore((s) => s.selectHistory)
 
   const module = labModules.find((m) => m.id === selectedId)
-  if (!module) return null
+  const selectedHistory = selectedHistoryId
+    ? labModules.flatMap((m) => m.history).find((h) => h.id === selectedHistoryId) ?? null
+    : null
 
-  const activeStep = module.dagSteps.find((s) => s.isActive || s.status === 'running')
+  const statusColor = module
+    ? module.status === 'running' ? 'text-emerald-400'
+      : module.status === 'completed' ? 'text-blue-400'
+      : module.status === 'error' ? 'text-red-400'
+      : 'text-white/40'
+    : 'text-white/40'
+  const statusLabel = module
+    ? module.status === 'running' ? '运行中'
+      : module.status === 'completed' ? '已完成'
+      : module.status === 'error' ? '异常'
+      : module.status === 'paused' ? '已暂停'
+      : '待机'
+    : ''
 
   return (
-    <div className="h-full overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-blue-800/30 scrollbar-track-transparent">
-      {/* 返回 + 标题行 */}
-      <div className="flex items-center gap-2 mb-3">
+    <div className="flex flex-col h-full">
+      {/* 返回 */}
+      <div className="shrink-0 px-3 pt-3 pb-2">
         <button
           onClick={() => selectModule(null)}
-          className="cursor-pointer flex items-center gap-1 rounded border border-blue-500/20 px-2 py-1 text-[10px] text-blue-300/60 transition-colors hover:text-blue-200 hover:border-blue-400/40"
+          className="flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 cursor-pointer transition-colors"
         >
-          <ArrowLeftIcon className="w-3 h-3" />
-          返回
+          <ArrowLeftIcon className="w-3.5 h-3.5" />
+          返回阵列表
         </button>
-        <span className="text-lg">{module.icon}</span>
-        <h2 className="text-sm font-semibold text-blue-100">{module.name}</h2>
-        {module.status === 'running' && (
-          <span className="text-[9px] text-cyan-400/60">[{activeStep ? `${activeStep.name} 进行中` : '执行中'}]</span>
-        )}
       </div>
 
-      {/* 传感器 */}
-      <div className="mb-3">
-        <div className="text-[9px] text-blue-400/40 mb-1 uppercase tracking-wider">实时传感器</div>
-        <SensorGrid module={module} />
-      </div>
+      {module && (
+        <>
+          {/* 标题 */}
+          <div className="shrink-0 px-3 pb-3">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">{module.icon}</span>
+              <div>
+                <div className="text-sm font-bold text-white">{module.name}</div>
+                <div className="text-xs text-white/50">{module.currentTask}</div>
+              </div>
+              <div className="ml-auto text-right">
+                <div className={`text-xs font-bold ${statusColor}`}>{statusLabel}</div>
+                <div className="text-xs text-white/30">{module.progress}%</div>
+              </div>
+            </div>
+          </div>
 
-      {/* DAG 图 */}
-      <div className="mb-3">
-        <div className="text-[9px] text-blue-400/40 mb-1.5 uppercase tracking-wider flex items-center gap-2">
-          实验步骤拓扑 (DAG)
-          {/* 图例 */}
-          <span className="flex items-center gap-2 text-[8px] text-blue-400/30 normal-case tracking-normal">
-            <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded bg-orange-500/50" /> PHY 物理资源</span>
-            <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded bg-blue-500/50" /> LLM 算力</span>
-            <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-0.5 bg-emerald-500/60" /> 已完成</span>
-            <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-0.5 border-t border-dashed border-blue-400/40" /> 等待中</span>
-          </span>
-        </div>
-        <div className="rounded-lg border border-blue-500/10 bg-blue-950/20 p-3 overflow-x-auto">
-          <DagSvg steps={module.dagSteps} />
-        </div>
-      </div>
+          {/* 传感器 */}
+          <div className="shrink-0 px-3 pb-3">
+            <SensorGrid module={module} />
+          </div>
 
-      {/* 任务队列 + 历史实验（两列） */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <h4 className="text-[9px] text-blue-400/40 mb-1.5 uppercase tracking-wider">任务队列</h4>
-          <TaskQueue module={module} />
-        </div>
-        <div>
-          <h4 className="text-[9px] text-blue-400/40 mb-1.5 uppercase tracking-wider">历史实验</h4>
-          <HistoryList module={module} />
-        </div>
-      </div>
+          {/* DAG */}
+          {module.dagSteps.length > 0 && (
+            <div className="shrink-0 px-3 pb-3">
+              <div className="text-[10px] text-white/30 font-medium uppercase tracking-wider mb-1.5">实验步骤流程</div>
+              <div className="rounded border border-white/10 bg-black/30 p-2">
+                <DagSvg steps={module.dagSteps} />
+              </div>
+            </div>
+          )}
+
+          {/* 历史+队列 */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 grid grid-cols-2 gap-3">
+            <div>
+              <div className="text-[10px] text-white/30 font-medium uppercase tracking-wider mb-1.5">历史实验 ({module.history.length})</div>
+              <HistoryList module={module} />
+            </div>
+            <div>
+              <div className="text-[10px] text-white/30 font-medium uppercase tracking-wider mb-1.5">任务队列 ({module.taskQueue.length})</div>
+              <TaskQueue module={module} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {selectedHistory && (
+        <ExperimentResultViewer
+          experiment={selectedHistory}
+          onClose={() => selectHistory(null)}
+        />
+      )}
     </div>
   )
 }

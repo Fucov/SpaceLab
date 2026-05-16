@@ -203,23 +203,33 @@ LightRAG/
 HOST=0.0.0.0
 PORT=9621
 
-# LLM Configuration (示例：阿里云通义千问)
+# LLM Configuration (示例：阿里云通义千问 / SiliconFlow 等 OpenAI 兼容服务)
 LLM_BINDING=openai
-LLM_BINDING_HOST=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_BINDING_HOST=https://llm.actscal.org/v1
 LLM_BINDING_API_KEY=your-api-key
-LLM_MODEL=qwen-turbo
+LLM_MODEL=lab-chat
 
-# Embedding Configuration
+# Embedding Configuration (SiliconFlow 示例)
+# IMPORTANT: Embedding API Key 必须有效，否则文档无法索引！
+# 配置错误的表现：日志中出现 "401 - Api key is invalid"
+# 测试 API Key 有效性：
+# curl -X POST "https://api.siliconflow.cn/v1/embeddings" \
+#   -H "Authorization: Bearer YOUR_API_KEY" \
+#   -H "Content-Type: application/json" \
+#   -d '{"model":"BAAI/bge-m3","input":"test","dimensions":1024}'
 EMBEDDING_BINDING=openai
-EMBEDDING_BINDING_HOST=https://dashscope.aliyuncs.com/compatible-mode/v1
-EMBEDDING_BINDING_API_KEY=your-api-key
-EMBEDDING_MODEL=text-embedding-v2
-EMBEDDING_DIM=1536
+EMBEDDING_BINDING_HOST=https://api.siliconflow.cn/v1
+EMBEDDING_BINDING_API_KEY=your-embedding-api-key
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIM=1024
+EMBEDDING_SEND_DIM=false
 
 # Optional: Reranker
-RERANK_BINDING=cohere
-RERANK_MODEL=bge-reranker-v2-m3
+# RERANK_BINDING=cohere
+# RERANK_MODEL=bge-reranker-v2-m3
 ```
+
+> **注意**：更换 Embedding 模型后必须清空 `rag_storage/` 目录重新索引。
 
 详细配置请参考 `env.example` 文件。
 
@@ -238,3 +248,111 @@ RERANK_MODEL=bge-reranker-v2-m3
 ## License
 
 本项目继承 LightRAG 许可证。
+
+## 故障排查指南
+
+### 症状：返回 "No relevant context found for the query."
+
+这是最常见的 RAG 检索失败症状。**大多数情况下，这不是 LightRAG 代码问题，而是配置或数据问题。** 请按以下顺序排查：
+
+#### 第一步：检查服务器日志
+
+```bash
+tail -100 lightrag.log
+```
+
+**关键错误标识：**
+
+| 日志关键词 | 含义 | 解决方案 |
+|-----------|------|----------|
+| `401 - Api key is invalid` | **Embedding API Key 无效** | 更新 `.env` 中的 `EMBEDDING_BINDING_API_KEY` |
+| `401 - Api key is invalid` | **LLM API Key 无效** | 更新 `.env` 中的 `LLM_BINDING_API_KEY` |
+| `Failed to batch pre-compute embeddings` | Embedding 服务调用失败 | 检查 Embedding 服务是否可用 |
+| `Connection refused` | 服务地址错误或未启动 | 确认 `EMBEDDING_BINDING_HOST` 地址正确 |
+| `Loaded graph... 0 nodes, 0 edges` | **知识图谱为空** | 先上传文档并确认处理成功 |
+| `full_docs with 0 records` | **文档未索引** | 先上传并处理文档 |
+
+#### 第二步：确认文档已正确索引
+
+RAG 必须先处理文档才能检索。检查存储目录：
+
+```bash
+# 查看存储文件大小（正常应该有数 KB）
+ls -la rag_storage/
+
+# 正常文件示例（不是空的）：
+# - kv_store_full_docs.json        应有数 KB（包含文档内容）
+# - kv_store_doc_status.json      应有数 KB（包含处理状态）
+# - vdb_chunks.json               应有数 KB（包含 chunk 向量）
+# - vdb_entities.json              应有数 KB（包含实体向量）
+# - vdb_relationships.json         应有数 KB（包含关系向量）
+# - graph_chunk_entity_relation.graphml  应有数 KB（包含图数据）
+
+# 如果这些文件只有 2 字节（内容为 {}），说明文档从未被成功索引
+```
+
+**常见原因：**
+1. Embedding API Key 无效 → 文档处理失败
+2. 文档处理过程中出错 → 检查日志中的 Pipeline 相关错误
+3. 服务器重启导致后台处理中断 → 重新点击"扫描"按钮
+
+#### 第三步：测试 API Key 是否有效
+
+**测试 LLM API：**
+```bash
+curl -X POST "https://llm.actscal.org/v1/chat/completions" \
+  -H "Authorization: Bearer sk-oDTMuzKIOhXSIlQxYhTI4A" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"lab-chat","messages":[{"role":"user","content":"hello"}],"max_tokens":10}'
+```
+
+**测试 Embedding API（SiliconFlow）：**
+```bash
+curl -X POST "https://api.siliconflow.cn/v1/embeddings" \
+  -H "Authorization: Bearer sk-zbichgykjbgncimarxzsqkzpsvxogmyglrrrp" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"BAAI/bge-m3","input":"test","dimensions":1024}'
+```
+
+如果返回 401/403 错误，说明 API Key 已失效，需要到对应平台重新获取。
+
+#### 第四步：确认 Embedding 配置与文档处理一致
+
+**重要：** Embedding 模型必须在文档索引前确定，索引和查询必须使用相同的 Embedding 模型和维度。
+
+```bash
+# 查看当前 Embedding 配置
+grep -E "EMBEDDING_" .env
+
+# 常见配置（SiliconFlow）：
+EMBEDDING_BINDING=openai
+EMBEDDING_BINDING_HOST=https://api.siliconflow.cn/v1
+EMBEDDING_BINDING_API_KEY=your-valid-key
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIM=1024
+EMBEDDING_SEND_DIM=false
+```
+
+#### 第五步：检查文档处理状态
+
+访问 API 文档页面 (`http://localhost:9621/docs`)，使用以下接口：
+
+1. **GET /documents/pipeline_status** - 查看处理队列状态
+2. **POST /documents/scan** - 重新扫描并处理输入目录中的文档
+3. **GET /documents** - 查看所有文档的处理状态
+
+文档状态应为 `PROCESSED`，不是 `FAILED` 或 `PENDING`。
+
+### 症状：服务器返回 500 错误
+
+检查 `lightrag.log` 中的具体错误信息，常见原因：
+- LLM/Embedding 服务不可达
+- 超时配置过短
+- 存储目录权限问题
+
+### 症状：上传文档后处理状态一直为 PENDING
+
+可能原因：
+1. 后台处理被中断 → 重新点击"扫描"按钮
+2. 文档太大 → 分成小文件上传
+3. 并发数配置过低 → 增加 `MAX_PARALLEL_INSERT`

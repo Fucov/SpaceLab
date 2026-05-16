@@ -8,13 +8,94 @@
  * - 数据链接可点击查看原始数据
  */
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import type { HistoryExperiment, ExperimentDataGroup } from './types'
-import { FileText, Download, ChevronDown, ChevronUp, ExternalLink, X } from 'lucide-react'
+import { FileText, Download, ChevronDown, ChevronUp, ExternalLink, X, FileSpreadsheet } from 'lucide-react'
+
+// ================================================================
+// 生成 CSV Blob URL（供下载原始数据）
+// ================================================================
+
+function generateCSV(experiment: HistoryExperiment): string {
+  const lines = [`"${experiment.name}" - 原始数据\n`]
+  lines.push(`"舱体","${experiment.id}"`)
+  lines.push(`"日期","${experiment.date}"`)
+  lines.push(`"结果","${experiment.result}"`)
+  lines.push(`"数据点","${experiment.dataPoints}"`)
+  lines.push(`"摘要","${experiment.summary.replace(/"/g, '""')}"`)
+  lines.push('')
+
+  if (experiment.dataGroups && experiment.dataGroups.length > 0) {
+    const firstGroup = experiment.dataGroups[0]
+    const headers = ['X', ...experiment.dataGroups.map((g) => g.label)]
+    lines.push(headers.map((h) => `"${h}"`).join(','))
+    const maxLen = Math.max(...experiment.dataGroups.map((g) => g.data.length))
+    for (let i = 0; i < maxLen; i++) {
+      const row = [
+        firstGroup.timestamps?.[i] ?? i,
+        ...experiment.dataGroups.map((g) => g.data[i] ?? ''),
+      ]
+      lines.push(row.map((v) => `"${v}"`).join(','))
+    }
+  } else if (experiment.temperatureHistory && experiment.temperatureHistory.length > 0) {
+    lines.push('"时间","温度"')
+    experiment.temperatureHistory.forEach((v, i) => {
+      const ts = experiment.historyTimestamps?.[i] ?? i
+      lines.push(`"${ts}",${v}`)
+    })
+  }
+
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+  return URL.createObjectURL(blob)
+}
+
+function generateReport(experiment: HistoryExperiment): string {
+  const groups = experiment.dataGroups ?? []
+  const metadataLines = [
+    `# ${experiment.name}`,
+    '',
+    `**日期**: ${experiment.date}`,
+    `**实验结果**: ${experiment.result}`,
+    `**数据点数**: ${experiment.dataPoints.toLocaleString()}`,
+    '',
+    '## 实验摘要',
+    '',
+    experiment.summary,
+    '',
+  ]
+
+  if (groups.length > 0) {
+    metadataLines.push('## 数据组')
+    metadataLines.push('')
+    groups.forEach((g) => {
+      metadataLines.push(`### ${g.label}`)
+      metadataLines.push(`- 类型: ${g.type}`)
+      metadataLines.push(`- 描述: ${g.description}`)
+      if (g.metadata) {
+        metadataLines.push('- 元数据:')
+        Object.entries(g.metadata).forEach(([k, v]) => {
+          metadataLines.push(`  - ${k}: ${v}`)
+        })
+      }
+      metadataLines.push(`- 数据点数: ${g.data.length}`)
+      metadataLines.push('')
+      metadataLines.push('| X轴 | 数值 |')
+      metadataLines.push('|---|---:|')
+      g.data.forEach((v, i) => {
+        const x = g.timestamps?.[i] ?? i
+        metadataLines.push(`| ${x} | ${v} |`)
+      })
+      metadataLines.push('')
+    })
+  }
+
+  const blob = new Blob(['\ufeff' + metadataLines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+  return URL.createObjectURL(blob)
+}
 
 // ================================================================
 // 工程风格图表组件
@@ -281,22 +362,36 @@ export default function ExperimentResultViewer({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {experiment.dataUrl && (
-              <a href={experiment.dataUrl} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50 transition-colors">
+            {experiment.dataGroups && experiment.dataGroups.length > 0 && (
+              <button
+                onClick={() => {
+                  const url = generateCSV(experiment)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `${experiment.id}_data.csv`
+                  a.click()
+                  setTimeout(() => URL.revokeObjectURL(url), 5000)
+                }}
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+              >
                 <Download className="w-3.5 h-3.5" />
-                原始数据
-                <ExternalLink className="w-3 h-3" />
-              </a>
+                原始数据(CSV)
+              </button>
             )}
-            {experiment.reportUrl && (
-              <a href={experiment.reportUrl} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 transition-colors">
-                <FileText className="w-3.5 h-3.5" />
-                实验报告
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            )}
+            <button
+              onClick={() => {
+                const url = generateReport(experiment)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `${experiment.id}_report.md`
+                a.click()
+                setTimeout(() => URL.revokeObjectURL(url), 5000)
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              实验报告(MD)
+            </button>
             <button onClick={onClose}
               className="cursor-pointer p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
               <X className="w-5 h-5" />

@@ -7,15 +7,103 @@
  * - 代码高亮
  * - 实验数据链接（自定义渲染）
  * - 流式输出时增量追加
+ * - 思考内容折叠（识别 <think> 标签，类似 GPT/DeepSeek）
  */
 
+import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import type { Components } from 'react-markdown'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, ChevronDown, Brain } from 'lucide-react'
+
+// ================================================================
+// 思考内容提取与折叠
+// ================================================================
+
+interface ThinkingBlock {
+  raw: string      // 原始 <think>...</think> 标签
+  content: string  // 标签内的思考内容
+  placeholder: string // 替换用的占位符 marker
+}
+
+// 提取所有 <think>...</think> 块，返回处理后的内容和各块列表
+function extractThinkingBlocks(text: string): { processed: string; blocks: ThinkingBlock[] } {
+  const blocks: ThinkingBlock[] = []
+  const placeholder = '__THINKING_BLOCK__'
+  let idx = 0
+
+  const processed = text.replace(/<think>([\s\S]*?)<\/think>/gi, (match, content) => {
+    const block: ThinkingBlock = {
+      raw: match,
+      content: content.trim(),
+      placeholder: `${placeholder}${idx}__`,
+    }
+    blocks.push(block)
+    idx++
+    return block.placeholder
+  })
+
+  return { processed, blocks }
+}
+
+// 渲染占位符为折叠面板
+function renderThinkingPlaceholder(
+  placeholder: string,
+  content: string,
+  index: number
+) {
+  return (
+    <ThinkingFoldable
+      key={`think-${placeholder}-${index}`}
+      content={content}
+      defaultExpanded={false}
+    />
+  )
+}
+
+interface ThinkingFoldableProps {
+  content: string
+  defaultExpanded?: boolean
+}
+
+function ThinkingFoldable({ content, defaultExpanded = false }: ThinkingFoldableProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded)
+
+  return (
+    <div className="my-2 rounded-lg border border-blue-200 bg-blue-50/30 overflow-hidden">
+      {/* 可点击的头部 */}
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="w-full flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-blue-100/40 transition-colors text-left"
+        aria-expanded={expanded}
+      >
+        <Brain className="w-4 h-4 text-blue-500 shrink-0" />
+        <span className="text-xs font-medium text-blue-600">
+          思考过程 {expanded ? '(点击收起)' : '(点击展开)'}
+        </span>
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-blue-400 ml-auto shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {/* 展开内容 */}
+      {expanded && (
+        <div className="px-3 pb-3 border-t border-blue-100">
+          <div className="pt-2 text-xs text-gray-600 leading-relaxed whitespace-pre-wrap font-mono">
+            {content}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ================================================================
+// Markdown 组件
+// ================================================================
 
 const components: Components = {
   // 代码块
@@ -148,20 +236,34 @@ const components: Components = {
   },
 }
 
+// ================================================================
+// 主渲染器
+// ================================================================
+
 interface MarkdownRendererProps {
   content: string
   className?: string
 }
 
 export default function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+  const { processed, blocks } = extractThinkingBlocks(content)
+
   return (
     <div className={`prose-sm max-w-none ${className || ''}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        components={components}
-      >
-        {content}
-      </ReactMarkdown>
+      {/* 渲染 <think> 思考块 */}
+      {blocks.map((block, i) =>
+        renderThinkingPlaceholder(block.placeholder, block.content, i)
+      )}
+
+      {/* 渲染处理后的 Markdown 内容（占位符处留空） */}
+      {processed.trim() && (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          components={components}
+        >
+          {processed}
+        </ReactMarkdown>
+      )}
     </div>
   )
 }

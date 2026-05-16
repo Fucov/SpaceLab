@@ -63,8 +63,6 @@ export const labModules: LabModule[] = [
         result: 'success',
         summary: '在微重力环境下成功诱导间充质干细胞向成骨细胞分化，分化效率达78.3%，显著高于地面对照组(45.1%)。钙结节染色阳性率提高67%。',
         dataPoints: 24580,
-        dataUrl: 'https://tiankong-station.cn/experiments/ls-h1/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/ls-h1/report',
         dataGroups: [
           {
             id: 'g1', label: '实验组(μG)', description: '微重力环境下的细胞增殖曲线',
@@ -98,8 +96,6 @@ export const labModules: LabModule[] = [
         result: 'success',
         summary: '观察到太空环境下线虫肌动蛋白F-actin含量下降32%，肌原纤维结构异常，与地面模拟微重力结果高度吻合。',
         dataPoints: 12800,
-        dataUrl: 'https://tiankong-station.cn/experiments/ls-h2/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/ls-h2/report',
         dataGroups: [
           {
             id: 'g1', label: 'F-actin相对含量(%)', description: '肌动蛋白F-actin含量变化',
@@ -157,8 +153,8 @@ export const labModules: LabModule[] = [
         result: 'success',
         summary: '在微重力环境下测得FC-72临界热流密度(CHF)为12.4 W/cm²，低于地面值(18.2 W/cm²)，分析了气泡行为差异对传热的影响机制。',
         dataPoints: 36200,
-        dataUrl: 'https://tiankong-station.cn/experiments/fp-h1/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/fp-h1/report',
+        
+        
         dataGroups: [
           {
             id: 'g1', label: 'CHF随压力变化', description: '临界热流密度随系统压力变化曲线',
@@ -220,8 +216,8 @@ export const labModules: LabModule[] = [
         result: 'success',
         summary: '成功制备直径8mm的Zr基块体金属玻璃，玻璃形成能力(GFA)参数Tg/Tl=0.62，过冷液相区ΔTx=68K，热稳定性优异。XRD确认完全非晶结构，HRTEM未观察到晶格条纹。',
         dataPoints: 48920,
-        dataUrl: 'https://tiankong-station.cn/experiments/me-h1/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/me-h1/report',
+        
+        
         dataGroups: [
           {
             id: 'g1', label: 'DSC热流曲线', description: '差示扫描量热法测量玻璃化转变和晶化过程',
@@ -253,8 +249,8 @@ export const labModules: LabModule[] = [
         result: 'partial',
         summary: 'CZ法单晶硅生长长度82mm，位错密度1.8×10⁴ cm⁻²，电阻率0.8-1.2 Ω·cm，达到设计指标的85%。籽晶区域出现少量微孪晶。',
         dataPoints: 31500,
-        dataUrl: 'https://tiankong-station.cn/experiments/me-h2/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/me-h2/report',
+        
+        
         dataGroups: [
           {
             id: 'g1', label: '温度梯度(°C/cm)', description: '炉膛轴向温度梯度分布',
@@ -309,8 +305,8 @@ export const labModules: LabModule[] = [
         result: 'success',
         summary: '在微重力环境下观测到煤油液滴燃烧形成的独特球形火焰结构，测得soot inception延迟时间比地面延长约40%，peak soot浓度位置外移，分析了浮力缺失对燃烧和碳黑生成的影响。',
         dataPoints: 156000,
-        dataUrl: 'https://tiankong-station.cn/experiments/cb-h1/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/cb-h1/report',
+        
+        
         dataGroups: [
           {
             id: 'g1', label: '液滴直径平方d² (mm²)', description: '液滴直径平方随时间变化(经典d²定律)',
@@ -383,8 +379,8 @@ export const labModules: LabModule[] = [
         result: 'success',
         summary: '利用天宫高光谱仪获取南海海域叶绿素a浓度分布图，浓度范围0.08-8.2 mg/m³，与MODIS卫星产品对比相关性R²=0.87。发现夏季上升流区域存在高浓度叶绿素聚集现象。',
         dataPoints: 842000,
-        dataUrl: 'https://tiankong-station.cn/experiments/eo-h1/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/eo-h1/report',
+        
+        
         dataGroups: [
           {
             id: 'g1', label: '叶绿素a浓度(mg/m³)', description: '不同站位叶绿素a浓度分布',
@@ -439,8 +435,8 @@ export const labModules: LabModule[] = [
         result: 'failed',
         summary: '溶菌酶结晶实验因培养箱温度失控导致失败。温度最高达32°C(设定20°C)，超过蛋白质变性阈值，样品全部失活。教训：需增加独立温度监控告警。',
         dataPoints: 4200,
-        dataUrl: 'https://tiankong-station.cn/experiments/be-h1/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/be-h1/report',
+        
+        
         dataGroups: [
           {
             id: 'g1', label: '培养箱温度(°C)', description: '温度失控过程记录',
@@ -458,8 +454,8 @@ export const labModules: LabModule[] = [
         result: 'success',
         summary: '在微重力条件下表达的EGFP蛋白折叠效率达到94.2%，比地面表达(82.5%)提高14.2%。圆二色谱证实折叠构象正确，荧光强度提高11.8%。',
         dataPoints: 18600,
-        dataUrl: 'https://tiankong-station.cn/experiments/be-h2/data',
-        reportUrl: 'https://tiankong-station.cn/experiments/be-h2/report',
+        
+        
         dataGroups: [
           {
             id: 'g1', label: '荧光强度(a.u.)', description: 'EGFP荧光强度随表达时间变化',
