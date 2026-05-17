@@ -18,8 +18,8 @@ import { ExperimentDag, ExecutionDraft } from './AgentComponents'
 import { DagEditor } from './DagEditor'
 import ExperimentResultViewer from './ExperimentResultViewer'
 import { UploadButton } from './DocumentPanel'
-import { detectSkill, parseDagStepsFromText, getSkillLabel, SKILLS } from './skills'
-import type { Conversation, ChatMessage, HistoryExperiment, DagStepDetail } from './types'
+import { detectSkill, parseDagStepsFromText } from './skills'
+import type { Conversation, ChatMessage, HistoryExperiment } from './types'
 import {
   TabletIcon, FlaskConical,
   BookOpen, X,
@@ -27,7 +27,9 @@ import {
   AlertTriangle, Activity,
   BotMessageSquare,
   RotateCcw,
+  CheckCircle,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 // ================================================================
 // 本地智能回复（LLM 服务不可用时的降级）
@@ -345,7 +347,6 @@ function ChatArea() {
   const [retryCounts, setRetryCounts] = useState<Record<string, number> >({})
   const [showDagEditor, setShowDagEditor] = useState(false)
   const [executionPlan, setExecutionPlan] = useState<string | null>(null)
-  const [pendingDagSteps, setPendingDagSteps] = useState<DagStepDetail[] | null>(null)
   const messages = conv?.messages ?? []
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -449,7 +450,6 @@ function ChatArea() {
         if (msg) {
           useConversationStore.getState().updateMessage(activeId, assistantMsgId, { dagSteps })
         }
-        setPendingDagSteps(dagSteps)
         setShowDagEditor(true)
       }
     } catch {
@@ -512,19 +512,48 @@ function ChatArea() {
     if (!activeId || !conv) return
     // 1. 锁定当前对话，切换为监控模式
     useConversationStore.getState().lockConversation(activeId, true)
-    // 2. 将实验步骤同步到舱体 store
-    setSteps(activeId, conv.experimentSteps ?? [])
-    // 3. 添加执行告警日志
+    // 2. 获取目标舱体 ID（优先使用会话关联的舱体，否则默认使用燃烧舱）
+    const targetModuleId = conv.linkedModuleId || 'combustion'
+    const module = useSpaceLabStore.getState().labModules.find((m) => m.id === targetModuleId)
+    // 3. 将步骤详情映射为执行步骤（添加默认状态）
+    const executionSteps = request.steps.map((s) => ({
+      id: s.id,
+      name: s.name,
+      status: 'pending' as const,
+      parallelGroup: s.parallelGroup,
+    }))
+    // 4. 将实验步骤同步到舱体 store 并启动执行
+    useSpaceLabStore.getState().executeExperiment(targetModuleId, executionSteps)
+    // 5. 将步骤也同步到会话 store（供大屏 DAG 显示）
+    setSteps(activeId, executionSteps)
+    // 6. 添加执行告警日志
     useSpaceLabStore.getState().addAlertLog({
       id: `exec-${Date.now()}`,
       timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       level: 'INFO',
       source: '指令系统',
-      message: `[实验启动] ${request.title} - ${request.steps.length} 个步骤 - 模式: ${request.execution_mode}`,
+      message: `[实验启动] ${request.title} - ${executionSteps.length} 个步骤 - 模式: ${request.execution_mode}`,
     })
-    // 4. 创建新的监控查询会话（当前对话已锁定，用户可开新窗口查询状态）
+    // 7. 创建新的监控查询会话（当前对话已锁定，用户可开新窗口查询状态）
     const newConv = useConversationStore.getState().createConversation('experiment', `${request.title} - 监控`)
     useConversationStore.getState().setActiveConversation(newConv.id)
+    // 8. 显示成功提示
+    toast.success(
+      <div className="flex items-start gap-2">
+        <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+        <div>
+          <div className="font-medium">实验已启动</div>
+          <div className="text-xs opacity-80">
+            {request.title} · {executionSteps.length} 个步骤 · {request.execution_mode === 'sequential' ? '串行' : request.execution_mode === 'parallel' ? '并行' : '混合'}模式
+            {module ? ` · ${module.name}` : ''}
+          </div>
+          <div className="text-xs opacity-70 mt-0.5">
+            当前会话已锁定 · 请在大屏「活跃实验」监控进度
+          </div>
+        </div>
+      </div>,
+      { duration: 5000 }
+    )
   }, [activeId, conv, setSteps])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

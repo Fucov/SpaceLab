@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useRef, memo, useState } from 'react' // Import useMemo
+import { ReactNode, useEffect, useMemo, useRef, memo, useState } from 'react'
 import { Message } from '@/api/lightrag'
 import useTheme from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
@@ -9,6 +9,7 @@ import rehypeReact from 'rehype-react'
 import rehypeRaw from 'rehype-raw'
 import remarkMath from 'remark-math'
 import mermaid from 'mermaid'
+import katex from 'katex'
 import { remarkFootnotes } from '@/utils/remarkFootnotes'
 
 
@@ -69,12 +70,29 @@ export const ChatMessage = ({
   }, [isThinking, message.id])
 
   // The content to display is now non-ambiguous.
-  const finalThinkingContent = thinkingContent
+  // Strip tags from thinking content as well
+  const rawThinkingContent = thinkingContent || ''
+  // Strip all think tags from display content to prevent tag text from appearing in markdown.
+  // This is a safety net: even if parseCOTContent extracts thinking content correctly,
+  // some tags may slip through if the LLM outputs malformed or nested thinking blocks.
+  // Strip think tags from content. Uses full tag literals that never match HTML tags like <td>.
+  // Opening tags: <think>, <think>, <think>, <think>, <think>, <think>, <think>
+  // Closing tags: </think>, </think>, </think>, </think>, </think>, </think>, </think>
+  const THINK_ALL_TAGS = [
+    '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>',
+    '</think>', '</think>', '</think>', '</think>', '</think>', '</think>', '</think>',
+  ]
+  const THINK_TAG_STRIP_REGEX = new RegExp(
+    THINK_ALL_TAGS.map((t) => t.replace(/>/g, '\\>')).join('|'),
+    'gi'
+  )
+  const finalThinkingContent = rawThinkingContent.replace(THINK_TAG_STRIP_REGEX, '')
   // For user messages, displayContent will be undefined, so we fall back to content.
   // For assistant messages, we prefer displayContent but fallback to content for backward compatibility
-  const finalDisplayContent = message.role === 'user'
+  const rawDisplayContent = message.role === 'user'
     ? message.content
     : (displayContent !== undefined ? displayContent : (message.content || ''))
+  const finalDisplayContent = rawDisplayContent.replace(THINK_TAG_STRIP_REGEX, '')
 
   // Load KaTeX rehype plugin dynamically
   // Note: KaTeX extensions (mhchem, copy-tex) are imported statically in main.tsx
@@ -98,22 +116,56 @@ export const ChatMessage = ({
       const match = /language-(\w+)/.exec(className || '');
       const language = match ? match[1] : undefined;
 
-      // Handle math blocks ($$...$$) - provide better container and styling
+      // Handle math blocks ($$...$$) - render with KaTeX directly
       if (language === 'math' && !inline) {
-        return (
-          <div className="katex-display-wrapper my-4 overflow-x-auto">
-            <div className="text-current">{children}</div>
-          </div>
-        );
+        const mathContent = String(children).trim()
+        try {
+          const html = katex.renderToString(mathContent, {
+            displayMode: true,
+            throwOnError: false,
+            errorColor: theme === 'dark' ? '#ef4444' : '#dc2626',
+            trust: true,
+            strict: false,
+          })
+          return (
+            <div
+              className="katex-display-wrapper my-4 overflow-x-auto"
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          )
+        } catch {
+          return (
+            <div className="katex-display-wrapper my-4 overflow-x-auto">
+              <div className="text-current">{children}</div>
+            </div>
+          )
+        }
       }
 
       // Handle inline math ($...$) - ensure proper inline display
       if (language === 'math' && inline) {
-        return (
-          <span className="katex-inline-wrapper">
-            <span className="text-current">{children}</span>
-          </span>
-        );
+        const mathContent = String(children).trim()
+        try {
+          const html = katex.renderToString(mathContent, {
+            displayMode: false,
+            throwOnError: false,
+            errorColor: theme === 'dark' ? '#ef4444' : '#dc2626',
+            trust: true,
+            strict: false,
+          })
+          return (
+            <span
+              className="katex-inline-wrapper"
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          )
+        } catch {
+          return (
+            <span className="katex-inline-wrapper">
+              <span className="text-current">{children}</span>
+            </span>
+          )
+        }
       }
 
       // Handle all other code (inline and block)

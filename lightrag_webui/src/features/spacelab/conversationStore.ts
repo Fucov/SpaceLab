@@ -10,6 +10,7 @@
  */
 
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import type {
   Conversation,
   ConversationVersion,
@@ -127,13 +128,17 @@ interface ConversationState {
   getActiveConversation: () => Conversation | undefined
 }
 
-export const useConversationStore = create<ConversationState>((set, get) => ({
-  conversations: initialConversations,
-  activeConvId: 'conv-initial',
+const MAX_VERSION_HISTORY = 5 // Keep only last 5 versions per conversation to limit storage size
 
-  // ---- 会话管理 ----
+export const useConversationStore = create<ConversationState>()(
+  persist(
+    (set, get) => ({
+      conversations: initialConversations,
+      activeConvId: 'conv-initial',
 
-  createConversation: (kind, title, linkedModuleId) => {
+      // ---- 会话管理 ----
+
+      createConversation: (kind, title, linkedModuleId) => {
     const conv: Conversation = {
       id: makeId('conv'),
       title: title || (kind === 'experiment' ? '新实验设计' : '新知识问答'),
@@ -255,7 +260,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (c.id !== convId) return c
         const ver = makeVersion(c.messages)
         if (label) ver.label = label
-        const versions = [...c.versions, ver]
+        const versions = [...c.versions, ver].slice(-MAX_VERSION_HISTORY)
         return { ...c, versions, currentVersionIndex: versions.length - 1 }
       }),
     })),
@@ -330,4 +335,19 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const state = get()
     return state.conversations.find((c) => c.id === state.activeConvId)
   },
-}))
+    }),
+    {
+      name: 'spacelab-conversations',
+      storage: createJSONStorage(() => localStorage),
+      version: 1,
+      // Limit version history to avoid localStorage quota issues
+      partialize: (state) => ({
+        ...state,
+        conversations: state.conversations.map((c) => ({
+          ...c,
+          versions: c.versions.slice(-MAX_VERSION_HISTORY),
+        })),
+      }),
+    }
+  )
+)

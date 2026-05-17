@@ -10,10 +10,10 @@
  */
 
 import { useState, useCallback } from 'react'
-import type { DagStep, DagStepDetail, InstrumentParam } from './types'
+import type { DagStepDetail } from './types'
 import {
   Plus, Trash2, ChevronDown, ChevronRight,
-  CheckCircle, Clock, Edit3, X, FileText, RotateCcw, Play,
+  CheckCircle, Clock, Edit3, X, FileText, RotateCcw, Play, AlertTriangle,
 } from 'lucide-react'
 
 // ================================================================
@@ -22,7 +22,7 @@ import {
 
 interface DagEditorProps {
   /** 初始步骤列表（可选） */
-  initialSteps?: DagStep[]
+  initialSteps?: DagStepDetail[]
   /** 用户确认执行时的回调 */
   onConfirm?: (steps: DagStepDetail[], executionPlan: string) => void
   /** 用户取消时的回调 */
@@ -51,20 +51,15 @@ function defaultStepDetail(name = '新步骤', parallelGroup = 0): DagStepDetail
   }
 }
 
-function dagStepToDetail(step: DagStep): DagStepDetail {
+function dagStepToDetail(step: DagStepDetail): DagStepDetail {
   return {
-    id: makeId(),
+    id: step.id || makeId(),
     name: step.name || '未命名步骤',
     description: step.description || '',
-    instrumentParams: (step.instrument_params || []).map((p) => ({
-      key: p.name || 'param',
-      value: String(p.value ?? ''),
-      unit: p.unit || '',
-      editable: true,
-    })),
+    instrumentParams: step.instrumentParams || [],
     prerequisites: step.prerequisites || [],
     goals: step.goals || [],
-    parallelGroup: step.parallel_group ?? 0,
+    parallelGroup: step.parallelGroup ?? 0,
   }
 }
 
@@ -545,6 +540,93 @@ function generateExecutionPlan(steps: DagStepDetail[]): string {
 }
 
 // ================================================================
+// 执行确认对话框组件
+// ================================================================
+
+function ConfirmExecutionDialog({
+  steps,
+  show,
+  onClose,
+  onConfirm,
+}: {
+  steps: DagStepDetail[]
+  show: boolean
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  if (!show) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="w-[420px] rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden">
+        {/* 标题 */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gray-50">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-50 border border-red-100">
+            <AlertTriangle className="w-5 h-5 text-red-500" />
+          </div>
+          <div>
+            <div className="text-sm font-bold text-gray-800">确认执行实验</div>
+            <div className="text-xs text-gray-400">此操作将锁定当前会话并启动监控</div>
+          </div>
+        </div>
+
+        {/* 内容 */}
+        <div className="px-5 py-4 space-y-3">
+          <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 space-y-1.5">
+            <div className="text-xs text-gray-500">实验步骤概览</div>
+            {steps.slice(0, 5).map((step, i) => (
+              <div key={step.id} className="flex items-center gap-2 text-xs text-gray-700">
+                <span className="w-5 h-5 rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                  {i + 1}
+                </span>
+                <span className="font-medium truncate">{step.name}</span>
+                {step.parallelGroup > 0 && (
+                  <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded shrink-0">
+                    并行 {step.parallelGroup}
+                  </span>
+                )}
+              </div>
+            ))}
+            {steps.length > 5 && (
+              <div className="text-xs text-gray-400 pl-7">... 还有 {steps.length - 5} 个步骤</div>
+            )}
+          </div>
+
+          <div className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 p-3">
+            <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+            <div className="text-xs text-amber-700 leading-relaxed">
+              <strong>执行后将发生以下变化：</strong>
+              <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                <li>当前对话将被锁定，无法继续发送消息</li>
+                <li>系统将创建新的监控会话窗口</li>
+                <li>实验舱状态将切换为「运行中」</li>
+                <li>可在左侧栏「活跃实验」查看进度</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        {/* 操作 */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50">
+          <button
+            onClick={onClose}
+            className="cursor-pointer rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            className="cursor-pointer rounded-lg bg-green-600 px-4 py-2 text-xs font-medium text-white hover:bg-green-700 transition-colors flex items-center gap-1.5"
+          >
+            <Play className="w-3.5 h-3.5" />
+            确认执行
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ================================================================
 // 主组件
 // ================================================================
 
@@ -566,6 +648,7 @@ export function DagEditor({
   )
   const [previewMode, setPreviewMode] = useState(false)
   const [isPlanReady, setIsPlanReady] = useState(false)
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
 
   const updateStep = useCallback(
     (index: number, updated: DagStepDetail) => {
@@ -638,7 +721,7 @@ export function DagEditor({
             </button>
             {!readOnly && steps.length > 0 && (
               <button
-                onClick={handleStartExecution}
+                onClick={() => setShowConfirmDialog(true)}
                 className="cursor-pointer flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 transition-colors"
               >
                 <Play className="w-3 h-3" />
@@ -702,6 +785,7 @@ export function DagEditor({
   // 编辑模式
   // ================================================================
   return (
+    <>
     <div className="rounded-xl border border-blue-200 bg-blue-50/30 overflow-hidden my-2">
       {/* 头部 */}
       <div className="flex items-center gap-2 px-4 py-2 bg-blue-100/50 border-b border-blue-200">
@@ -805,7 +889,7 @@ export function DagEditor({
               生成执行计划
             </button>
             <button
-              onClick={handleStartExecution}
+              onClick={() => setShowConfirmDialog(true)}
               disabled={steps.length === 0}
               className="cursor-pointer flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
               title="锁定 DAG 并启动异步实验执行监控"
@@ -817,5 +901,14 @@ export function DagEditor({
         </div>
       )}
     </div>
+
+    {/* 执行确认对话框 */}
+    <ConfirmExecutionDialog
+      steps={steps}
+      show={showConfirmDialog}
+      onClose={() => setShowConfirmDialog(false)}
+      onConfirm={handleStartExecution}
+    />
+    </>
   )
 }

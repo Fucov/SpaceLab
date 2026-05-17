@@ -15,6 +15,7 @@ import { Prism as PrismLight } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import type { Components } from 'react-markdown'
 import { ExternalLink, ChevronDown, Brain } from 'lucide-react'
+import katex from 'katex'
 
 // ================================================================
 // 思考块检测（流式友好）
@@ -33,15 +34,22 @@ function normalizeText(text: string): string {
     .replace(/[\u2000-\u200A]/g, ' ')
 }
 
-const THINK_OPEN_PATTERNS = [
-  /<(?:think|Thought|分析|think>)[\s\S]*?>/gi,
-  /<\/?T[\s\S]*?>/gi,
+// 标签列表：使用完整字面量，绝不会误匹配 <td> 等 HTML 标签
+const THINK_ALL_TAGS = [
+  // 开头标签
+  '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>',
+  // 结尾标签
+  '</think>', '</think>', '</think>', '</think>', '</think>', '</think>', '</think>',
 ]
-const THINK_CLOSE_PATTERNS = [
-  /<\/(?:think|Thought|分析|think>)[\s\S]*?>/gi,
-  /<\/?T[\s\S]*?>/gi,
-]
-const THINK_CONTENT_STRIP = /<\/?(?:think|Thought|分析|think|T)[\s\S]*?>/gi
+// 转为正则：> 需转义为 \>
+const THINK_TAG_REGEX = new RegExp(
+  THINK_ALL_TAGS.map((t) => t.replace(/>/g, '\\>')).join('|'),
+  'gi'
+)
+
+// 用于增量检测的开始/结束标签（单标签模式，用于位置查找）
+const THINK_OPEN_TAGS = ['<think>', '<think>', '<think>', '<think>', '<think>', '<think>', '<think>']
+const THINK_CLOSE_TAGS = ['</think>', '</think>', '</think>', '</think>', '</think>', '</think>', '</think>']
 
 /**
  * 从累积文本中提取所有思考块（流式增量模式）
@@ -55,21 +63,21 @@ function extractThinkingIncremental(
 
   // 查找所有开始标签的位置
   const opens: { pos: number; tag: string }[] = []
-  for (const pat of THINK_OPEN_PATTERNS) {
-    const re = new RegExp(pat.source, pat.flags)
-    let m: RegExpExecArray | null
-    while ((m = re.exec(normalized)) !== null) {
-      opens.push({ pos: m.index, tag: m[0] })
+  for (const tag of THINK_OPEN_TAGS) {
+    let pos = 0
+    while ((pos = normalized.indexOf(tag, pos)) !== -1) {
+      opens.push({ pos, tag })
+      pos += tag.length
     }
   }
 
   // 查找所有结束标签的位置
   const closes: { pos: number; tag: string }[] = []
-  for (const pat of THINK_CLOSE_PATTERNS) {
-    const re = new RegExp(pat.source, pat.flags)
-    let m: RegExpExecArray | null
-    while ((m = re.exec(normalized)) !== null) {
-      closes.push({ pos: m.index, tag: m[0] })
+  for (const tag of THINK_CLOSE_TAGS) {
+    let pos = 0
+    while ((pos = normalized.indexOf(tag, pos)) !== -1) {
+      closes.push({ pos, tag })
+      pos += tag.length
     }
   }
 
@@ -90,7 +98,7 @@ function extractThinkingIncremental(
     const lastClose = closes[closes.length - 1].pos
     // 提取最后一个闭合标签之前的内容作为完整思考
     const maybeComplete = normalized.slice(0, lastClose)
-      .replace(THINK_CONTENT_STRIP, '')
+      .replace(THINK_TAG_REGEX, '')
       .trim()
     if (maybeComplete && prevBlocks.length === 0) {
       completeBlocks.push({
@@ -108,14 +116,10 @@ function extractThinkingIncremental(
   // 找到最后一个开始的思考块
   const lastOpen = opens[opens.length - 1]
 
-  // 检查是否有未闭合的思考块
-  // 统计开标签和闭标签的数量
-  let depth = 0
-  let lastOpenIdx = -1
-  let scanPos = 0
+  // 按位置排序所有标签
   const allTags = [
-    ...opens.map((o) => ({ pos: o.pos, type: 'open' as const })),
-    ...closes.map((c) => ({ pos: c.pos, type: 'close' as const })),
+    ...opens.map((o) => ({ pos: o.pos, tag: o.tag, type: 'open' as const })),
+    ...closes.map((c) => ({ pos: c.pos, tag: c.tag, type: 'close' as const })),
   ].sort((a, b) => a.pos - b.pos)
 
   for (const tag of allTags) {
@@ -125,7 +129,7 @@ function extractThinkingIncremental(
       const openTagEnd = lastOpen.pos + lastOpen.tag.length
       const content = normalized
         .slice(openTagEnd, tag.pos)
-        .replace(THINK_CONTENT_STRIP, '')
+        .replace(THINK_TAG_REGEX, '')
         .trim()
 
       if (content) {
@@ -135,7 +139,6 @@ function extractThinkingIncremental(
           complete: true,
         })
       }
-      scanPos = tag.pos + tag.tag.length
       break
     }
   }
@@ -146,18 +149,15 @@ function extractThinkingIncremental(
 
   if (openedCount > closedCount) {
     // 有未完成的思考块
-    const openEnd = lastOpen.pos + lastOpen.tag.length
     const lastClosePos = closes.length > 0 && closes[closes.length - 1].pos > lastOpen.pos
       ? closes[closes.length - 1].pos
       : -1
 
-    if (lastClosePos > lastOpen.pos) {
-      // 最后一个开始后面有闭合，已经在上面处理了
-    } else {
+    if (lastClosePos <= lastOpen.pos) {
       // 真正的未完成块
       incompleteContent = normalized
         .slice(lastOpen.pos + lastOpen.tag.length)
-        .replace(THINK_CONTENT_STRIP, '')
+        .replace(THINK_TAG_REGEX, '')
         .trim()
     }
   }
@@ -237,6 +237,35 @@ const codeStyle = {
 const CodeBlock: Components['code'] = ({ className, children }) => {
   const match = /language-(\w+)/.exec(className || '')
   const isInline = !match
+  const language = match ? match[1] : undefined
+
+  // Handle math blocks: render with KaTeX
+  if (language === 'math') {
+    const mathContent = String(children).trim()
+    const isBlock = !isInline
+    try {
+      const html = katex.renderToString(mathContent, {
+        displayMode: isBlock,
+        throwOnError: false,
+        errorColor: '#dc2626',
+        trust: true,
+        strict: false,
+      })
+      return (
+        <span
+          className={isBlock ? 'katex-display-wrapper my-4 overflow-x-auto' : 'katex-inline-wrapper'}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      )
+    } catch {
+      return (
+        <code className={isBlock ? 'katex-error' : ''}>
+          {children}
+        </code>
+      )
+    }
+  }
+
   if (isInline) {
     return (
       <code
@@ -274,20 +303,32 @@ const components: Components = {
   },
   table({ children }) {
     return (
-      <div className="overflow-x-auto my-2">
-        <table className="border-collapse border border-gray-200 text-xs w-full">
+      <div className="overflow-x-auto my-3 rounded-lg border border-gray-200">
+        <table className="min-w-full divide-y divide-gray-200 text-xs">
           <tbody>{children}</tbody>
         </table>
       </div>
     )
   },
+  thead({ children }) {
+    return <thead className="bg-gray-50">{children}</thead>
+  },
   th({ children, align }) {
     return (
-      <th className={`px-3 py-1.5 text-xs font-semibold border border-gray-200 bg-gray-50 ${
+      <th className={`px-4 py-2.5 text-xs font-semibold border-b border-gray-200 bg-gray-50 ${
         align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
       }`}>
         {children}
       </th>
+    )
+  },
+  td({ children, align }) {
+    return (
+      <td className={`px-4 py-2.5 text-xs border-b border-gray-100 ${
+        align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
+      }`}>
+        {children}
+      </td>
     )
   },
   tr({ children }) {
@@ -363,15 +404,10 @@ export default function StreamingMarkdownRenderer({
   const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], [])
 
   // 流式期间：从预处理的文本中移除思考块标签，显示为普通文本
+  // 流结束后：同样移除所有思考块标签，防止标签原文泄露
   const markdownForRender = useMemo(() => {
-    if (!isStreaming) return preprocessed
-
-    // 流式期间，先移除完整的思考块，保留未完成的标签让 Markdown 正常渲染
-    return preprocessed.replace(
-      /<(?:think|Thought|分析|think|T)>[\s\S]*?<\/(?:think|Thought|分析|think|T)>|<\/?T>[\s\S]*?<\/?T>/gi,
-      ''
-    )
-  }, [preprocessed, isStreaming])
+    return preprocessed.replace(THINK_TAG_REGEX, '')
+  }, [preprocessed])
 
   return (
     <div className={`prose-sm max-w-none ${className || ''}`}>

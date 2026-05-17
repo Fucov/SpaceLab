@@ -109,6 +109,12 @@ interface SpaceLabState {
    * 也处理自然语言指令解析
    */
   executeCommand: (command: string) => { success: boolean; message: string }
+
+  /**
+   * 执行实验流程（从 DAG 编辑器触发）
+   * 模拟实验步骤执行，每个步骤依次推进状态，完成后生成结果
+   */
+  executeExperiment: (moduleId: string, steps: import('./types').DagStep[]) => void
 }
 
 // ============================================================
@@ -355,5 +361,151 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
     }
 
     return { success: false, message: '' }
+  },
+
+  executeExperiment: (moduleId, steps) => {
+    const state = get()
+    const mod = state.labModules.find((m) => m.id === moduleId)
+    if (!mod || steps.length === 0) return
+
+    const now = new Date()
+    const ts = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
+
+    // 合并 DAG 步骤
+    const existingIds = new Set(mod.dagSteps.map((s) => s.id))
+    const newSteps = steps
+      .filter((s) => !existingIds.has(s.id))
+      .map((s) => ({ ...s, status: 'pending' as const, isActive: false }))
+
+    const allSteps = [...mod.dagSteps, ...newSteps]
+    const totalSteps = allSteps.length
+
+    get().addAlertLog({
+      id: `a${++logCounter}`,
+      timestamp: ts,
+      level: 'INFO',
+      source: '实验执行器',
+      message: `实验开始：${mod.name}，共${totalSteps}个步骤`,
+    })
+
+    set((prev) => ({
+      labModules: prev.labModules.map((m) =>
+        m.id === moduleId
+          ? { ...m, status: 'running', dagSteps: allSteps, currentTask: allSteps[0]?.name }
+          : m
+      ),
+    }))
+
+    // 按 parallelGroup 分批执行
+    const groups = new Map<number, typeof allSteps>()
+    for (const s of allSteps) {
+      const g = s.parallelGroup ?? 0
+      if (!groups.has(g)) groups.set(g, [])
+      groups.get(g)!.push(s)
+    }
+
+    const sortedGroups = [...groups.entries()].sort((a, b) => a[0] - b[0])
+
+    let stepIndex = 0
+
+    // 执行一批步骤
+    const runGroup = (groupIdx: number, groupSteps: typeof allSteps) => {
+      // 模拟步骤执行
+      for (const step of groupSteps) {
+        const duration = 3000 + Math.random() * 2000
+        const stepDuration = Math.round(duration / 1000)
+
+        set((prev) => ({
+          labModules: prev.labModules.map((m) =>
+            m.id === moduleId
+              ? {
+                  ...m,
+                  dagSteps: m.dagSteps.map((s) =>
+                    s.id === step.id ? { ...s, status: 'running', isActive: true } : s
+                  ),
+                  currentTask: step.name,
+                }
+              : m
+          ),
+        }))
+
+        const innerStep = step
+        const innerDuration = duration
+        const innerIndex = stepIndex
+        setTimeout(() => {
+          const success = Math.random() > 0.05 // 95% 成功率
+          const finalStatus = success ? 'completed' : 'error'
+          const nowInner = new Date()
+          const tsInner = `${nowInner.getHours().toString().padStart(2, '0')}:${nowInner.getMinutes().toString().padStart(2, '0')}:${nowInner.getSeconds().toString().padStart(2, '0')}`
+
+          set((prev) => ({
+            labModules: prev.labModules.map((m) =>
+              m.id === moduleId
+                ? {
+                    ...m,
+                    dagSteps: m.dagSteps.map((s) =>
+                      s.id === innerStep.id
+                        ? { ...s, status: finalStatus, duration: `${stepDuration}s`, isActive: false }
+                        : s
+                    ),
+                    progress: Math.round(((innerIndex + 1) / totalSteps) * 100),
+                  }
+                : m
+            ),
+          }))
+
+          get().addAlertLog({
+            id: `a${++logCounter}`,
+            timestamp: tsInner,
+            level: success ? 'INFO' : 'ERROR',
+            source: mod.name,
+            message: `步骤[${innerStep.name}]${success ? '已完成' : '失败'}`,
+          })
+
+          const isLastStep = groupIdx === sortedGroups.length - 1 && groupSteps.indexOf(innerStep) === groupSteps.length - 1
+
+          if (isLastStep) {
+            const finalModule = get().labModules.find((m) => m.id === moduleId)
+            const hasError = finalModule?.dagSteps.some((s) => s.status === 'error')
+            const nowFinal = new Date()
+            const tsFinal = `${nowFinal.getHours().toString().padStart(2, '0')}:${nowFinal.getMinutes().toString().padStart(2, '0')}:${nowFinal.getSeconds().toString().padStart(2, '0')}`
+
+            set((prev) => ({
+              labModules: prev.labModules.map((m) =>
+                m.id === moduleId
+                  ? {
+                      ...m,
+                      status: hasError ? 'standby' : 'completed',
+                      progress: hasError ? 0 : 100,
+                      currentTask: hasError ? '执行异常' : '已完成',
+                    }
+                  : m
+              ),
+            }))
+
+            get().addAlertLog({
+              id: `a${++logCounter}`,
+              timestamp: tsFinal,
+              level: hasError ? 'WARN' : 'INFO',
+              source: '实验执行器',
+              message: `实验${hasError ? '部分失败' : '全部完成'}：${mod.name}`,
+            })
+          }
+        }, innerDuration)
+        stepIndex++
+      }
+    }
+
+    // 顺序执行每批，等待上一批完成后开始下一批
+    let delay = 0
+    for (const [groupIdx, groupSteps] of sortedGroups) {
+      const capturedGroupIdx = groupIdx
+      const capturedGroupSteps = groupSteps
+      setTimeout(() => {
+        runGroup(capturedGroupIdx, capturedGroupSteps)
+      }, delay)
+      // 每批间隔 = 批次中最长步骤的估计时间 + 批次间隔
+      delay += 6000
+    }
   },
 }))
