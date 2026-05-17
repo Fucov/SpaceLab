@@ -139,14 +139,28 @@ export function parseDagStepsFromText(text: string): DagStepDetail[] | null {
   const startMarker = '[DAG_STEPS_START]'
   const endMarker = '[DAG_STEPS_END]'
 
-  const startIdx = text.indexOf(startMarker)
-  const endIdx = text.indexOf(endMarker)
+  // 尝试从完整文本中提取
+  let stepsText = ''
+  let startIdx = text.indexOf(startMarker)
+  let endIdx = text.indexOf(endMarker)
 
-  if (startIdx === -1 || endIdx === -1 || startIdx >= endIdx) {
-    return null
+  if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
+    stepsText = text.slice(startIdx + startMarker.length, endIdx).trim()
+  } else {
+    // 尝试从 thinking 标签外的内容中提取
+    const cleanText = text
+      .replace(/<think(?:ning)*>[\s\S]*?\x3E/gi, ' ')
+      .trim()
+
+    // 尝试在清理后的文本中查找
+    startIdx = cleanText.indexOf(startMarker)
+    endIdx = cleanText.indexOf(endMarker)
+    if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
+      stepsText = cleanText.slice(startIdx + startMarker.length, endIdx).trim()
+    }
   }
 
-  const stepsText = text.slice(startIdx + startMarker.length, endIdx).trim()
+  if (!stepsText) return null
   const lines = stepsText.split('\n').filter((l) => l.trim())
   const steps: DagStepDetail[] = []
 

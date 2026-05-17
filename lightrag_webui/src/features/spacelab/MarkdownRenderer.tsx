@@ -34,22 +34,14 @@ function normalizeText(text: string): string {
     .replace(/[\u2000-\u200A]/g, ' ')
 }
 
-// 标签列表：使用完整字面量，绝不会误匹配 <td> 等 HTML 标签
-const THINK_ALL_TAGS = [
-  // 开头标签
-  '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>', '<<think>>',
-  // 结尾标签
-  '</think>', '</think>', '</think>', '</think>', '</think>', '</think>', '</think>',
-]
-// 转为正则：> 需转义为 \>
-const THINK_TAG_REGEX = new RegExp(
-  THINK_ALL_TAGS.map((t) => t.replace(/>/g, '\\>')).join('|'),
-  'gi'
-)
+// 思考标签：直接使用字面量字符
+const THINK_OPEN_TAGS_LIST = ['<think>', '&lt;<think>&gt;', '&lt;<think>&gt;']
+const THINK_CLOSE_TAGS_LIST = ['</think>', '&lt;</think>&gt;', '&lt;</think>&gt;']
 
-// 用于增量检测的开始/结束标签（单标签模式，用于位置查找）
-const THINK_OPEN_TAGS = ['<think>', '<think>', '<think>', '<think>', '<think>', '<think>', '<think>']
-const THINK_CLOSE_TAGS = ['</think>', '</think>', '</think>', '</think>', '</think>', '</think>', '</think>']
+// 用于从渲染文本中移除思考标签的正则（匹配开始和结束标签）
+const THINK_TAG_REGEX = /<think.*?>/gi
+// 支持 HTML 实体编码版本（某些 LLM 输出 &lt;think&gt;）
+const THINK_TAG_HTML_ENTITY_REGEX = /&lt;think.*?&gt;/gi
 
 /**
  * 从累积文本中提取所有思考块（流式增量模式）
@@ -61,9 +53,9 @@ function extractThinkingIncremental(
 ): { blocks: ThinkingBlock[]; incomplete: string | null } {
   const normalized = normalizeText(text)
 
-  // 查找所有开始标签的位置
+  // 收集所有开始/结束标签位置
   const opens: { pos: number; tag: string }[] = []
-  for (const tag of THINK_OPEN_TAGS) {
+  for (const tag of THINK_OPEN_TAGS_LIST) {
     let pos = 0
     while ((pos = normalized.indexOf(tag, pos)) !== -1) {
       opens.push({ pos, tag })
@@ -71,9 +63,8 @@ function extractThinkingIncremental(
     }
   }
 
-  // 查找所有结束标签的位置
   const closes: { pos: number; tag: string }[] = []
-  for (const tag of THINK_CLOSE_TAGS) {
+  for (const tag of THINK_CLOSE_TAGS_LIST) {
     let pos = 0
     while ((pos = normalized.indexOf(tag, pos)) !== -1) {
       closes.push({ pos, tag })
@@ -81,83 +72,60 @@ function extractThinkingIncremental(
     }
   }
 
-  // 统计：判断是否有完整的块
   const completeBlocks: ThinkingBlock[] = []
   let incompleteContent: string | null = null
 
   if (opens.length === 0 && closes.length === 0) {
-    // 没有思考标签，返回已有的完整块
+    // 无标签时返回已有完整块
     return {
       blocks: prevBlocks.filter((b) => b.complete),
       incomplete: null,
     }
   }
 
-  if (opens.length === 0 && closes.length > 0) {
-    // 只有闭合标签，说明思考块在最前面已经完成
-    const lastClose = closes[closes.length - 1].pos
-    // 提取最后一个闭合标签之前的内容作为完整思考
-    const maybeComplete = normalized.slice(0, lastClose)
-      .replace(THINK_TAG_REGEX, '')
+  // 从已完成的块中继承 ID
+  const prevIds = new Set(prevBlocks.filter((b) => b.complete).map((b) => b.id))
+
+  // 配对：按出现顺序匹配开始和结束标签
+  let openIdx = 0
+  let closeIdx = 0
+  let blockIdCounter = Date.now()
+
+  while (openIdx < opens.length && closeIdx < closes.length) {
+    const open = opens[openIdx]
+    const close = closes[closeIdx]
+
+    if (close.pos < open.pos) {
+      // 孤立的闭合标签在第一个开始之前，忽略
+      closeIdx++
+      continue
+    }
+
+    // 提取标签之间的内容
+    const content = normalized
+      .slice(open.pos + open.tag.length, close.pos)
+      .replace(/[\n\r]+/g, ' ')
       .trim()
-    if (maybeComplete && prevBlocks.length === 0) {
-      completeBlocks.push({
-        id: Date.now(),
-        content: maybeComplete,
-        complete: true,
-      })
+
+    if (content) {
+      const id = blockIdCounter++
+      completeBlocks.push({ id, content, complete: true })
     }
-    return {
-      blocks: [...prevBlocks.filter((b) => b.complete), ...completeBlocks],
-      incomplete: null,
-    }
+
+    openIdx++
+    closeIdx++
   }
 
-  // 找到最后一个开始的思考块
-  const lastOpen = opens[opens.length - 1]
+  // 如果有未配对的开始标签，说明最后一块还在生成中
+  if (openIdx < opens.length) {
+    const lastOpen = opens[opens.length - 1]
+    const lastClose = closes.length > closeIdx ? closes[closes.length - 1].pos : -1
 
-  // 按位置排序所有标签
-  const allTags = [
-    ...opens.map((o) => ({ pos: o.pos, tag: o.tag, type: 'open' as const })),
-    ...closes.map((c) => ({ pos: c.pos, tag: c.tag, type: 'close' as const })),
-  ].sort((a, b) => a.pos - b.pos)
-
-  for (const tag of allTags) {
-    if (tag.pos > lastOpen.pos && tag.type === 'close') {
-      // 找到了最后一个开始标签之后的第一个闭合标签
-      // 提取内容
-      const openTagEnd = lastOpen.pos + lastOpen.tag.length
-      const content = normalized
-        .slice(openTagEnd, tag.pos)
-        .replace(THINK_TAG_REGEX, '')
-        .trim()
-
-      if (content) {
-        completeBlocks.push({
-          id: Date.now() + completeBlocks.length,
-          content,
-          complete: true,
-        })
-      }
-      break
-    }
-  }
-
-  // 检查是否有未完成的块（开始多于闭合）
-  const openedCount = opens.length
-  const closedCount = closes.filter((c) => c.pos > (opens[0]?.pos ?? 0)).length
-
-  if (openedCount > closedCount) {
-    // 有未完成的思考块
-    const lastClosePos = closes.length > 0 && closes[closes.length - 1].pos > lastOpen.pos
-      ? closes[closes.length - 1].pos
-      : -1
-
-    if (lastClosePos <= lastOpen.pos) {
+    if (lastClose < lastOpen.pos || closes.length === 0) {
       // 真正的未完成块
       incompleteContent = normalized
         .slice(lastOpen.pos + lastOpen.tag.length)
-        .replace(THINK_TAG_REGEX, '')
+        .replace(/[\n\r]+/g, ' ')
         .trim()
     }
   }
@@ -372,47 +340,68 @@ export default function StreamingMarkdownRenderer({
   isStreaming = false,
   className,
 }: StreamingMarkdownRendererProps) {
-  const [completedBlocks, setCompletedBlocks] = useState<ThinkingBlock[]>([])
+  // 最终状态（流结束后使用）
+  const [finalBlocks, setFinalBlocks] = useState<ThinkingBlock[]>([])
+  // 流期间：累积的完整块（只用 ref，累积增长，永不丢失）
+  const completedBlocksRef = useRef<ThinkingBlock[]>([])
+  // 流期间：未完成的内容
   const [incompleteContent, setIncompleteContent] = useState<string | null>(null)
-  const prevBlocksRef = useRef<ThinkingBlock[]>([])
 
-  // 流式期间：每次 content 变化时增量提取思考块
+  // 流式期间：每次 content 变化时增量提取
   useEffect(() => {
-    if (!isStreaming) {
-      // 流结束后，直接解析所有块
-      const { blocks, incomplete } = extractThinkingIncremental(content, [])
-      setCompletedBlocks(blocks.filter((b) => b.complete))
-      setIncompleteContent(incomplete)
-      return
+    if (!isStreaming) return
+
+    const { blocks } = extractThinkingIncremental(content, [])
+    const newCompleted = blocks.filter((b) => b.complete)
+
+    if (newCompleted.length > 0) {
+      const existingIds = new Set(completedBlocksRef.current.map((b) => b.id))
+      for (const block of newCompleted) {
+        if (!existingIds.has(block.id)) {
+          completedBlocksRef.current = [...completedBlocksRef.current, block]
+        }
+      }
     }
 
-    const { blocks, incomplete } = extractThinkingIncremental(content, prevBlocksRef.current)
+    // 未完成内容：从最后一个开始标签后提取到内容末尾
+    const normalized = normalizeText(content)
+    const lastOpen = Math.max(
+      normalized.lastIndexOf('<think>'),
+      normalized.lastIndexOf('&lt;<think>&gt;')
+    )
+    const lastClose = Math.max(
+      normalized.lastIndexOf('</think>'),
+      normalized.lastIndexOf('&lt;</think>&gt;')
+    )
+    setIncompleteContent(lastOpen > lastClose ? normalized.slice(lastOpen + 5).trim() : null)
+  }, [content, isStreaming])
 
-    // 如果有新的完整块，触发重新渲染
-    const newCompleteBlocks = blocks.filter((b) => b.complete)
-    const prevCompleteCount = prevBlocksRef.current.filter((b) => b.complete).length
-
-    if (newCompleteBlocks.length > prevCompleteCount || incomplete !== incompleteContent) {
-      setCompletedBlocks([...newCompleteBlocks])
-      setIncompleteContent(incomplete)
-      prevBlocksRef.current = blocks
-    }
+  // 流结束时：转换为最终状态
+  useEffect(() => {
+    if (isStreaming) return
+    const { blocks } = extractThinkingIncremental(content, [])
+    setFinalBlocks(blocks.filter((b) => b.complete))
+    completedBlocksRef.current = []
+    setIncompleteContent(null)
   }, [content, isStreaming])
 
   const preprocessed = useMemo(() => preprocessMathBlocks(content), [content])
-
   const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], [])
 
+  // 思考块：流期间用 ref 中的累积块，流结束后用 finalBlocks
+  const thinkingBlocks = isStreaming ? completedBlocksRef.current : finalBlocks
+
   // 流式期间：从预处理的文本中移除思考块标签，显示为普通文本
-  // 流结束后：同样移除所有思考块标签，防止标签原文泄露
   const markdownForRender = useMemo(() => {
-    return preprocessed.replace(THINK_TAG_REGEX, '')
+    return preprocessed
+      .replace(THINK_TAG_REGEX, '')
+      .replace(THINK_TAG_HTML_ENTITY_REGEX, '')
   }, [preprocessed])
 
   return (
     <div className={`prose-sm max-w-none ${className || ''}`}>
       {/* 思考折叠面板（流式期间实时渲染已完成的块） */}
-      {completedBlocks.map((block) => (
+      {thinkingBlocks.map((block) => (
         <ThinkingFoldable key={block.id} content={block.content} />
       ))}
 

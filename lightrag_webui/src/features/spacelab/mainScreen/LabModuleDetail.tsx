@@ -333,14 +333,20 @@ export default function LabModuleDetail() {
           </div>
 
           {/* DAG */}
-          {module.dagSteps.length > 0 && (
-            <div className="shrink-0 px-3 pb-3">
-              <div className="text-[10px] text-white/30 font-medium uppercase tracking-wider mb-1.5">实验步骤流程</div>
+          <div className="shrink-0 px-3 pb-3">
+            <div className="text-[10px] text-white/30 font-medium uppercase tracking-wider mb-1.5">实验步骤流程</div>
+            {module.dagSteps.length > 0 ? (
               <div className="rounded border border-white/10 bg-black/30 p-2">
                 <DagSvg steps={module.dagSteps} />
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="rounded border border-dashed border-white/10 bg-black/20 p-6 flex flex-col items-center justify-center gap-2">
+                <div className="text-white/20 text-2xl">🧪</div>
+                <div className="text-xs text-white/40 text-center">暂无实验步骤</div>
+                <div className="text-[10px] text-white/25 text-center">在左侧智能助手对话框中描述实验内容<br/>AI 将自动生成实验步骤 DAG</div>
+              </div>
+            )}
+          </div>
 
           {/* 历史+队列 */}
           <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 grid grid-cols-2 gap-3">

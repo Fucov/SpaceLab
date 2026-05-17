@@ -293,13 +293,6 @@ function ChatMessageItem({ msg, convId, onRetry, retryCount, onDagConfirm, onDag
           </div>
         )}
 
-        {conv?.experimentSteps && conv.experimentSteps.length > 0 && (
-          <div className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
-            <div className="text-[10px] text-gray-400 font-medium mb-1.5 uppercase tracking-wider">实验步骤设计</div>
-            <ExperimentDag steps={conv.experimentSteps} compact />
-          </div>
-        )}
-
         {conv?.draftParams && (
           <ExecutionDraft
             params={conv.draftParams}
@@ -647,17 +640,49 @@ function ChatArea() {
         </form>
         <div className="text-[10px] text-gray-400 mt-1.5 text-center flex items-center justify-center gap-3">
           <span>Enter 发送 · Shift+Enter 换行</span>
-          <button
-            onClick={() => { setShowDagEditor((v) => !v); setExecutionPlan(null) }}
-            className="cursor-pointer text-blue-500 hover:text-blue-700 underline underline-offset-2 decoration-blue-300 hover:decoration-blue-500 transition-colors"
-          >
-            设计实验 DAG
-          </button>
         </div>
+
+        {/* 设计实验快捷入口（始终可见） */}
+        {!showDagEditor && !isLoading && (
+          <div className="mt-1.5">
+            <button
+              onClick={() => setShowDagEditor(true)}
+              className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-all cursor-pointer"
+            >
+              <FlaskConical className="w-3.5 h-3.5" />
+              打开实验步骤设计器
+            </button>
+          </div>
+        )}
+
+        {/* 设计实验快捷入口（始终可见） */}
+        {!showDagEditor && !isLoading && (
+          <div className="mt-1.5">
+            <button
+              onClick={() => setShowDagEditor(true)}
+              className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-all cursor-pointer"
+            >
+              <FlaskConical className="w-3.5 h-3.5" />
+              打开实验步骤设计器
+            </button>
+          </div>
+        )}
 
         {/* DAG 编辑器浮层 */}
         {showDagEditor && (
-          <div className="mt-3 p-3 bg-blue-50/50 rounded-xl border border-blue-200">
+          <div className="mt-3 mx-4 mb-1 p-3 bg-blue-50/50 rounded-xl border border-blue-200 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <FlaskConical className="w-4 h-4 text-blue-500" />
+                <span className="text-sm font-semibold text-blue-700">实验步骤设计器</span>
+              </div>
+              <button
+                onClick={() => setShowDagEditor(false)}
+                className="cursor-pointer p-1 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
             <DagEditor
               onConfirm={(_steps, plan) => {
                 setExecutionPlan(plan)
