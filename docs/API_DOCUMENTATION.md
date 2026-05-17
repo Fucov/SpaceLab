@@ -52,4 +52,4 @@
 
 ### 环境配置
 
-所有配置通过 `.env` 文件管理（见 `env.example`）。详细配置说明请参阅 [SPACELAB_TECHNICAL_WHITEPAPER.md](./SPACELAB_TECHNICAL_WHITEPAPER.md) 第 3 节。
+所有配置通过 `.env` 文件管理。依赖与最小配置示例见 [REQUIREMENTS.md](./REQUIREMENTS.md)，详细配置说明请参阅 [SPACELAB_TECHNICAL_WHITEPAPER.md](./SPACELAB_TECHNICAL_WHITEPAPER.md) 第 3 节。

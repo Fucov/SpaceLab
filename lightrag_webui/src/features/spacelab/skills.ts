@@ -134,30 +134,23 @@ function makeId(prefix = 'step') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+function stripThinkingBlocks(text: string): string {
+  return text.replace(/(?:<think\b[^>]*>|&lt;think\b[^&]*?&gt;)[\s\S]*?(?:<\/think>|&lt;\/think&gt;|$)/gi, ' ')
+}
+
 export function parseDagStepsFromText(text: string): DagStepDetail[] | null {
   // 查找 DAG_STEPS_START 和 DAG_STEPS_END 之间的内容
   const startMarker = '[DAG_STEPS_START]'
   const endMarker = '[DAG_STEPS_END]'
 
-  // 尝试从完整文本中提取
+  // 只从最终正文中提取，避免模型在 <think> 里自检格式时误触发 DAG 解析。
+  const cleanText = stripThinkingBlocks(text).trim()
   let stepsText = ''
-  let startIdx = text.indexOf(startMarker)
-  let endIdx = text.indexOf(endMarker)
+  const startIdx = cleanText.indexOf(startMarker)
+  const endIdx = cleanText.indexOf(endMarker)
 
   if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
-    stepsText = text.slice(startIdx + startMarker.length, endIdx).trim()
-  } else {
-    // 尝试从 thinking 标签外的内容中提取
-    const cleanText = text
-      .replace(/<think(?:ning)*>[\s\S]*?\x3E/gi, ' ')
-      .trim()
-
-    // 尝试在清理后的文本中查找
-    startIdx = cleanText.indexOf(startMarker)
-    endIdx = cleanText.indexOf(endMarker)
-    if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
-      stepsText = cleanText.slice(startIdx + startMarker.length, endIdx).trim()
-    }
+    stepsText = cleanText.slice(startIdx + startMarker.length, endIdx).trim()
   }
 
   if (!stepsText) return null

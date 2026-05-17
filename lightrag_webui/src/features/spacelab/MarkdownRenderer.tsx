@@ -7,7 +7,7 @@
  * - 支持思维过程折叠、数学公式、代码高亮
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -27,6 +27,12 @@ interface ThinkingBlock {
   complete: boolean
 }
 
+interface ParsedThinking {
+  visibleText: string
+  blocks: ThinkingBlock[]
+  incomplete: ThinkingBlock | null
+}
+
 // 归一化文本
 function normalizeText(text: string): string {
   return text
@@ -34,106 +40,63 @@ function normalizeText(text: string): string {
     .replace(/[\u2000-\u200A]/g, ' ')
 }
 
-// 思考标签：直接使用字面量字符
-const THINK_OPEN_TAGS_LIST = ['<think>', '&lt;<think>&gt;', '&lt;<think>&gt;']
-const THINK_CLOSE_TAGS_LIST = ['</think>', '&lt;</think>&gt;', '&lt;</think>&gt;']
-
-// 用于从渲染文本中移除思考标签的正则（匹配开始和结束标签）
-const THINK_TAG_REGEX = /<think.*?>/gi
-// 支持 HTML 实体编码版本（某些 LLM 输出 &lt;think&gt;）
-const THINK_TAG_HTML_ENTITY_REGEX = /&lt;think.*?&gt;/gi
+const THINK_OPEN_PATTERN = /(?:<think\b[^>]*>|&lt;think\b[^&]*?&gt;)/gi
+const DAG_STEPS_BLOCK_REGEX = /\[DAG_STEPS_START\][\s\S]*?(?:\[DAG_STEPS_END\]|$)/gi
 
 /**
- * 从累积文本中提取所有思考块（流式增量模式）
- * 返回已完成的块列表 + 当前未完成的块内容（如果有）
+ * 从文本中提取思考块，并返回可渲染正文。
+ * 这个解析器会直接删除 <think>...</think> 内部内容，避免思考过程泄露到正文。
  */
-function extractThinkingIncremental(
-  text: string,
-  prevBlocks: ThinkingBlock[]
-): { blocks: ThinkingBlock[]; incomplete: string | null } {
+function parseThinking(text: string): ParsedThinking {
   const normalized = normalizeText(text)
+  const tagRegex = /(?:<think\b[^>]*>|<\/think>|&lt;think\b[^&]*?&gt;|&lt;\/think&gt;)/gi
+  const blocks: ThinkingBlock[] = []
+  const visibleParts: string[] = []
+  let cursor = 0
+  let activeStart: number | null = null
+  let activeContentStart = 0
+  let match: RegExpExecArray | null
 
-  // 收集所有开始/结束标签位置
-  const opens: { pos: number; tag: string }[] = []
-  for (const tag of THINK_OPEN_TAGS_LIST) {
-    let pos = 0
-    while ((pos = normalized.indexOf(tag, pos)) !== -1) {
-      opens.push({ pos, tag })
-      pos += tag.length
-    }
-  }
+  while ((match = tagRegex.exec(normalized)) !== null) {
+    const tag = match[0].toLowerCase()
+    const isOpen = THINK_OPEN_PATTERN.test(tag)
+    THINK_OPEN_PATTERN.lastIndex = 0
 
-  const closes: { pos: number; tag: string }[] = []
-  for (const tag of THINK_CLOSE_TAGS_LIST) {
-    let pos = 0
-    while ((pos = normalized.indexOf(tag, pos)) !== -1) {
-      closes.push({ pos, tag })
-      pos += tag.length
-    }
-  }
-
-  const completeBlocks: ThinkingBlock[] = []
-  let incompleteContent: string | null = null
-
-  if (opens.length === 0 && closes.length === 0) {
-    // 无标签时返回已有完整块
-    return {
-      blocks: prevBlocks.filter((b) => b.complete),
-      incomplete: null,
-    }
-  }
-
-  // 从已完成的块中继承 ID
-  const prevIds = new Set(prevBlocks.filter((b) => b.complete).map((b) => b.id))
-
-  // 配对：按出现顺序匹配开始和结束标签
-  let openIdx = 0
-  let closeIdx = 0
-  let blockIdCounter = Date.now()
-
-  while (openIdx < opens.length && closeIdx < closes.length) {
-    const open = opens[openIdx]
-    const close = closes[closeIdx]
-
-    if (close.pos < open.pos) {
-      // 孤立的闭合标签在第一个开始之前，忽略
-      closeIdx++
+    if (isOpen) {
+      if (activeStart === null) {
+        visibleParts.push(normalized.slice(cursor, match.index))
+        activeStart = match.index
+        activeContentStart = match.index + match[0].length
+      }
       continue
     }
 
-    // 提取标签之间的内容
-    const content = normalized
-      .slice(open.pos + open.tag.length, close.pos)
-      .replace(/[\n\r]+/g, ' ')
-      .trim()
-
-    if (content) {
-      const id = blockIdCounter++
-      completeBlocks.push({ id, content, complete: true })
-    }
-
-    openIdx++
-    closeIdx++
-  }
-
-  // 如果有未配对的开始标签，说明最后一块还在生成中
-  if (openIdx < opens.length) {
-    const lastOpen = opens[opens.length - 1]
-    const lastClose = closes.length > closeIdx ? closes[closes.length - 1].pos : -1
-
-    if (lastClose < lastOpen.pos || closes.length === 0) {
-      // 真正的未完成块
-      incompleteContent = normalized
-        .slice(lastOpen.pos + lastOpen.tag.length)
-        .replace(/[\n\r]+/g, ' ')
-        .trim()
+    if (activeStart !== null) {
+      const content = normalized.slice(activeContentStart, match.index).trim()
+      if (content) {
+        blocks.push({ id: blocks.length, content, complete: true })
+      }
+      cursor = match.index + match[0].length
+      activeStart = null
+      activeContentStart = 0
     }
   }
 
-  return {
-    blocks: [...prevBlocks.filter((b) => b.complete), ...completeBlocks],
-    incomplete: incompleteContent,
+  if (activeStart !== null) {
+    const content = normalized.slice(activeContentStart).trim()
+    return {
+      visibleText: visibleParts.join(''),
+      blocks,
+      incomplete: content ? { id: blocks.length, content, complete: false } : null,
+    }
   }
+
+  visibleParts.push(normalized.slice(cursor))
+  return { visibleText: visibleParts.join(''), blocks, incomplete: null }
+}
+
+function stripDagStepsBlock(text: string): string {
+  return text.replace(DAG_STEPS_BLOCK_REGEX, '').trim()
 }
 
 // ================================================================
@@ -142,9 +105,11 @@ function extractThinkingIncremental(
 
 function ThinkingFoldable({
   content,
+  complete = true,
   defaultExpanded = false,
 }: {
   content: string
+  complete?: boolean
   defaultExpanded?: boolean
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded)
@@ -160,7 +125,7 @@ function ThinkingFoldable({
       >
         <Brain className="w-4 h-4 text-blue-500 shrink-0" />
         <span className="text-xs font-medium text-blue-600">
-          思考过程 {expanded ? '(点击收起)' : '(点击展开)'}
+          {complete ? '思考过程' : '思考中'} {expanded ? '(点击收起)' : '(点击展开)'}
         </span>
         <ChevronDown
           className={`w-3.5 h-3.5 text-blue-400 ml-auto shrink-0 transition-transform duration-200 ${
@@ -171,7 +136,7 @@ function ThinkingFoldable({
 
       {expanded && (
         <div className="px-3 pb-3 border-t border-blue-100">
-          <div className="pt-2 text-xs text-gray-600 leading-relaxed whitespace-pre-wrap font-mono">
+          <div className={`pt-2 text-xs text-gray-600 leading-relaxed whitespace-pre-wrap font-mono ${complete ? '' : 'animate-pulse'}`}>
             {content}
           </div>
         </div>
@@ -342,61 +307,33 @@ export default function StreamingMarkdownRenderer({
 }: StreamingMarkdownRendererProps) {
   // 最终状态（流结束后使用）
   const [finalBlocks, setFinalBlocks] = useState<ThinkingBlock[]>([])
-  // 流期间：累积的完整块（只用 ref，累积增长，永不丢失）
-  const completedBlocksRef = useRef<ThinkingBlock[]>([])
   // 流期间：未完成的内容
-  const [incompleteContent, setIncompleteContent] = useState<string | null>(null)
+  const [incompleteBlock, setIncompleteBlock] = useState<ThinkingBlock | null>(null)
 
   // 流式期间：每次 content 变化时增量提取
   useEffect(() => {
     if (!isStreaming) return
-
-    const { blocks } = extractThinkingIncremental(content, [])
-    const newCompleted = blocks.filter((b) => b.complete)
-
-    if (newCompleted.length > 0) {
-      const existingIds = new Set(completedBlocksRef.current.map((b) => b.id))
-      for (const block of newCompleted) {
-        if (!existingIds.has(block.id)) {
-          completedBlocksRef.current = [...completedBlocksRef.current, block]
-        }
-      }
-    }
-
-    // 未完成内容：从最后一个开始标签后提取到内容末尾
-    const normalized = normalizeText(content)
-    const lastOpen = Math.max(
-      normalized.lastIndexOf('<think>'),
-      normalized.lastIndexOf('&lt;<think>&gt;')
-    )
-    const lastClose = Math.max(
-      normalized.lastIndexOf('</think>'),
-      normalized.lastIndexOf('&lt;</think>&gt;')
-    )
-    setIncompleteContent(lastOpen > lastClose ? normalized.slice(lastOpen + 5).trim() : null)
+    const parsed = parseThinking(content)
+    setFinalBlocks(parsed.blocks)
+    setIncompleteBlock(parsed.incomplete)
   }, [content, isStreaming])
 
   // 流结束时：转换为最终状态
   useEffect(() => {
     if (isStreaming) return
-    const { blocks } = extractThinkingIncremental(content, [])
-    setFinalBlocks(blocks.filter((b) => b.complete))
-    completedBlocksRef.current = []
-    setIncompleteContent(null)
+    const parsed = parseThinking(content)
+    setFinalBlocks(parsed.incomplete ? [...parsed.blocks, { ...parsed.incomplete, complete: true }] : parsed.blocks)
+    setIncompleteBlock(null)
   }, [content, isStreaming])
 
-  const preprocessed = useMemo(() => preprocessMathBlocks(content), [content])
+  const visibleContent = useMemo(() => {
+    return stripDagStepsBlock(parseThinking(content).visibleText)
+  }, [content])
+  const preprocessed = useMemo(() => preprocessMathBlocks(visibleContent), [visibleContent])
   const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], [])
 
-  // 思考块：流期间用 ref 中的累积块，流结束后用 finalBlocks
-  const thinkingBlocks = isStreaming ? completedBlocksRef.current : finalBlocks
-
-  // 流式期间：从预处理的文本中移除思考块标签，显示为普通文本
-  const markdownForRender = useMemo(() => {
-    return preprocessed
-      .replace(THINK_TAG_REGEX, '')
-      .replace(THINK_TAG_HTML_ENTITY_REGEX, '')
-  }, [preprocessed])
+  const thinkingBlocks = finalBlocks
+  const markdownForRender = preprocessed
 
   return (
     <div className={`prose-sm max-w-none ${className || ''}`}>
@@ -405,17 +342,14 @@ export default function StreamingMarkdownRenderer({
         <ThinkingFoldable key={block.id} content={block.content} />
       ))}
 
-      {/* 流式期间的未完成思考内容（直接显示在 Markdown 之前） */}
-      {isStreaming && incompleteContent && (
-        <div className="my-2 rounded-lg border border-blue-200 bg-blue-50/30 px-3 py-2">
-          <div className="flex items-center gap-2 mb-1">
-            <Brain className="w-3.5 h-3.5 text-blue-500" />
-            <span className="text-[10px] text-blue-500 font-medium">思考中...</span>
-          </div>
-          <div className="text-xs text-gray-500 leading-relaxed whitespace-pre-wrap font-mono animate-pulse">
-            {incompleteContent}
-          </div>
-        </div>
+      {/* 流式期间的未完成思考内容，同样可折叠 */}
+      {isStreaming && incompleteBlock && (
+        <ThinkingFoldable
+          key="incomplete-thinking"
+          content={incompleteBlock.content}
+          complete={false}
+          defaultExpanded
+        />
       )}
 
       {/* Markdown 内容 */}

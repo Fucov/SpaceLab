@@ -9,7 +9,7 @@
  * - 支持"开始执行"：启动实验监控模式
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import type { DagStepDetail } from './types'
 import {
   Plus, Trash2, ChevronDown, ChevronRight,
@@ -320,61 +320,108 @@ const DAG_LEGEND = [
 // ================================================================
 
 function DagPreviewWithLegend({ steps }: { steps: DagStepDetail[] }) {
-  const groups = new Map<number, DagStepDetail[]>()
-  steps.forEach((s) => {
-    const g = s.parallelGroup ?? 0
-    if (!groups.has(g)) groups.set(g, [])
-    groups.get(g)!.push(s)
-  })
-  const sortedGroups = Array.from(groups.entries()).sort(([a], [b]) => a - b)
-
-  const nodeWidth = 100
-  const nodeHeight = 32
-  const groupGap = 24
-  const nodeGap = 8
-  const groupWidths = sortedGroups.map(([, nodes]) => {
-    if (nodes.length === 0) return nodeWidth
-    return nodeWidth + (nodes.length - 1) * (nodeWidth + nodeGap)
-  })
-  const maxGroupWidth = Math.max(...groupWidths)
-  const svgW = sortedGroups.length * (maxGroupWidth + groupGap) - groupGap + 24
-  const svgH = nodeHeight + 28
-  const legendH = 20
-
-  // 收集所有连接线
-  const lines: {
-    x1: number; y1: number; x2: number; y2: number; parallel: boolean
-  }[] = []
-
-  let xOffset = 12
-  sortedGroups.forEach(([, nodes], gi) => {
-    const groupX = xOffset + maxGroupWidth / 2 - groupWidths[gi] / 2
-    nodes.forEach((_, ni) => {
-      const nx = groupX + ni * (nodeWidth + nodeGap)
-      const ny = legendH + (svgH - legendH - nodeHeight) / 2
-      if (gi < sortedGroups.length - 1) {
-        const nextNodes = sortedGroups[gi + 1][1]
-        const nextGroupX =
-          xOffset +
-          (gi + 1) * (maxGroupWidth + groupGap) +
-          maxGroupWidth / 2 -
-          groupWidths[gi + 1] / 2
-        nextNodes.forEach((nextNode) => {
-          const nnx = nextGroupX + (nextNode.parallelGroup ?? 0) * (nodeWidth + nodeGap)
-          const isParallel =
-            (nodes[0]?.parallelGroup ?? 0) === (nextNode.parallelGroup ?? 0)
-          lines.push({
-            x1: nx + nodeWidth,
-            y1: ny + nodeHeight / 2,
-            x2: nnx,
-            y2: ny + nodeHeight / 2,
-            parallel: isParallel,
-          })
-        })
-      }
+  const { nodes, lines, svgW, svgH } = useMemo(() => {
+    const groups = new Map<number, DagStepDetail[]>()
+    steps.forEach((s) => {
+      const g = s.parallelGroup ?? 0
+      if (!groups.has(g)) groups.set(g, [])
+      groups.get(g)!.push(s)
     })
-    xOffset += maxGroupWidth + groupGap
-  })
+    const sortedGroups = Array.from(groups.entries()).sort(([a], [b]) => a - b)
+
+    const nodeWidth = 116
+    const nodeHeight = 34
+    const groupGap = 58
+    const nodeGap = 12
+    const pad = 12
+    const legendH = 20
+    const maxGroupH = sortedGroups.reduce(
+      (max, [, group]) => Math.max(max, group.length * (nodeHeight + nodeGap) - nodeGap),
+      nodeHeight
+    )
+    const svgW = Math.max(320, sortedGroups.length * (nodeWidth + groupGap) - groupGap + pad * 2)
+    const svgH = legendH + maxGroupH + pad * 2
+    const nodes: {
+      step: DagStepDetail
+      x: number
+      y: number
+      w: number
+      h: number
+      group: number
+      parallel: boolean
+    }[] = []
+
+    sortedGroups.forEach(([groupId, groupSteps], groupIndex) => {
+      const x = pad + groupIndex * (nodeWidth + groupGap)
+      const groupH = groupSteps.length * (nodeHeight + nodeGap) - nodeGap
+      const startY = legendH + pad + (maxGroupH - groupH) / 2
+      groupSteps.forEach((step, stepIndex) => {
+        nodes.push({
+          step,
+          x,
+          y: startY + stepIndex * (nodeHeight + nodeGap),
+          w: nodeWidth,
+          h: nodeHeight,
+          group: groupId,
+          parallel: groupSteps.length > 1,
+        })
+      })
+    })
+
+    const byGroup = sortedGroups.map(([groupId]) => nodes.filter((node) => node.group === groupId))
+    const lines: {
+      d: string
+      parallel: boolean
+      arrow: boolean
+    }[] = []
+    for (let i = 0; i < byGroup.length - 1; i++) {
+      const current = byGroup[i]
+      const next = byGroup[i + 1]
+      const isFan = current.length > 1 || next.length > 1
+
+      if (!isFan) {
+        const from = current[0]
+        const to = next[0]
+        const x1 = from.x + from.w
+        const y1 = from.y + from.h / 2
+        const x2 = to.x
+        const y2 = to.y + to.h / 2
+        lines.push({
+          d: `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`,
+          parallel: false,
+          arrow: true,
+        })
+        continue
+      }
+
+      const currentYs = current.map((node) => node.y + node.h / 2)
+      const nextYs = next.map((node) => node.y + node.h / 2)
+      const busX = (current[0].x + current[0].w + next[0].x) / 2
+      lines.push({
+        d: `M ${busX} ${Math.min(...currentYs, ...nextYs)} L ${busX} ${Math.max(...currentYs, ...nextYs)}`,
+        parallel: true,
+        arrow: false,
+      })
+      current.forEach((from) => {
+        const y = from.y + from.h / 2
+        lines.push({
+          d: `M ${from.x + from.w} ${y} L ${busX} ${y}`,
+          parallel: true,
+          arrow: false,
+        })
+      })
+      next.forEach((to) => {
+        const y = to.y + to.h / 2
+        lines.push({
+          d: `M ${busX} ${y} L ${to.x} ${y}`,
+          parallel: true,
+          arrow: true,
+        })
+      })
+    }
+
+    return { nodes, lines, svgW, svgH }
+  }, [steps])
 
   return (
     <div>
@@ -403,59 +450,59 @@ function DagPreviewWithLegend({ steps }: { steps: DagStepDetail[] }) {
       {/* SVG 图 */}
       <div className="overflow-x-auto py-1">
         <svg width={Math.max(svgW, 300)} height={svgH} className="block">
+          <defs>
+            <marker id="editor-dag-arrow" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+              <polygon points="0 0, 7 2.5, 0 5" fill="#3b82f6" />
+            </marker>
+            <marker id="editor-dag-arrow-parallel" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto">
+              <polygon points="0 0, 7 2.5, 0 5" fill="#10b981" />
+            </marker>
+          </defs>
           {/* 连接线 */}
-          {lines.map((l, i) => {
-            const midX = (l.x1 + l.x2) / 2
-            const d = `M ${l.x1} ${l.y1} C ${midX} ${l.y1}, ${midX} ${l.y2}, ${l.x2} ${l.y2}`
-            return (
-              <path
-                key={i}
-                d={d}
-                fill="none"
-                stroke={l.parallel ? '#10b981' : '#3b82f6'}
-                strokeWidth={1.5}
-                strokeDasharray={l.parallel ? '4,3' : 'none'}
-                opacity={0.6}
-              />
-            )
-          })}
+          {lines.map((l, i) => (
+            <path
+              key={i}
+              d={l.d}
+              fill="none"
+              stroke={l.parallel ? '#10b981' : '#3b82f6'}
+              strokeWidth={1.5}
+              strokeDasharray={l.parallel ? '4,3' : 'none'}
+              opacity={0.6}
+              markerEnd={l.arrow ? (l.parallel ? 'url(#editor-dag-arrow-parallel)' : 'url(#editor-dag-arrow)') : undefined}
+            />
+          ))}
           {/* 节点 */}
-          {(() => {
-            xOffset = 12
-            const elements: React.ReactNode[] = []
-            sortedGroups.forEach(([, nodes], gi) => {
-              const groupX = xOffset + maxGroupWidth / 2 - groupWidths[gi] / 2
-              nodes.forEach((node, ni) => {
-                const nx = groupX + ni * (nodeWidth + nodeGap)
-                const ny = legendH + (svgH - legendH - nodeHeight) / 2
-                const isParallel = nodes.length > 1 || (node.parallelGroup ?? 0) > 0
-                elements.push(
-                  <g key={node.id}>
-                    <rect
-                      x={nx} y={ny}
-                      width={nodeWidth} height={nodeHeight}
-                      rx={6} ry={6}
-                      fill={isParallel ? '#d1fae5' : '#eff6ff'}
-                      stroke={isParallel ? '#10b981' : '#3b82f6'}
-                      strokeWidth={1.5}
-                    />
-                    <text
-                      x={nx + nodeWidth / 2} y={ny + nodeHeight / 2}
-                      textAnchor="middle" dominantBaseline="central"
-                      fill={isParallel ? '#065f46' : '#1e40af'}
-                      fontSize={9}
-                      fontFamily="monospace"
-                      fontWeight="600"
-                    >
-                      {node.name.slice(0, 12)}
-                    </text>
-                  </g>
-                )
-              })
-              xOffset += maxGroupWidth + groupGap
-            })
-            return elements
-          })()}
+          {nodes.map((node) => (
+            <g key={node.step.id}>
+              <rect
+                x={node.x} y={node.y}
+                width={node.w} height={node.h}
+                rx={6} ry={6}
+                fill={node.parallel ? '#d1fae5' : '#eff6ff'}
+                stroke={node.parallel ? '#10b981' : '#3b82f6'}
+                strokeWidth={1.5}
+              />
+              <text
+                x={node.x + node.w / 2} y={node.y + node.h / 2 - 3}
+                textAnchor="middle" dominantBaseline="central"
+                fill={node.parallel ? '#065f46' : '#1e40af'}
+                fontSize={9}
+                fontFamily="monospace"
+                fontWeight="600"
+              >
+                {node.step.name.length > 12 ? `${node.step.name.slice(0, 11)}…` : node.step.name}
+              </text>
+              <text
+                x={node.x + node.w / 2} y={node.y + node.h / 2 + 9}
+                textAnchor="middle" dominantBaseline="central"
+                fill={node.parallel ? '#047857' : '#2563eb'}
+                fontSize={8}
+                fontFamily="monospace"
+              >
+                组 {node.group}
+              </text>
+            </g>
+          ))}
         </svg>
       </div>
     </div>
@@ -725,7 +772,7 @@ export function DagEditor({
                 className="cursor-pointer flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 transition-colors"
               >
                 <Play className="w-3 h-3" />
-                开始执行
+                执行实验
               </button>
             )}
           </div>
@@ -895,7 +942,7 @@ export function DagEditor({
               title="锁定 DAG 并启动异步实验执行监控"
             >
               <Play className="w-3.5 h-3.5" />
-              开始执行
+              执行实验
             </button>
           </div>
         </div>

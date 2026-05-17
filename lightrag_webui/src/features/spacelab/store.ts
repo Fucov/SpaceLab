@@ -371,13 +371,8 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
     const now = new Date()
     const ts = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
 
-    // 合并 DAG 步骤
-    const existingIds = new Set(mod.dagSteps.map((s) => s.id))
-    const newSteps = steps
-      .filter((s) => !existingIds.has(s.id))
-      .map((s) => ({ ...s, status: 'pending' as const, isActive: false }))
-
-    const allSteps = [...mod.dagSteps, ...newSteps]
+    // 本次显式 DAG 设计应替换舱体当前流程，避免旧 mock 步骤和新步骤混在一起。
+    const allSteps = steps.map((s) => ({ ...s, status: 'pending' as const, isActive: false }))
     const totalSteps = allSteps.length
 
     get().addAlertLog({

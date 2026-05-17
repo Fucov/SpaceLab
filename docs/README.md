@@ -8,17 +8,28 @@
 
 | 文档 | 用途 | 读者 |
 |------|------|------|
+| **REQUIREMENTS.md** | 统一依赖、环境检查、PowerShell 启停 | 部署人员、开发者 |
 | **SPACELAB_USER_MANUAL.md** | 双屏使用手册 | 普通用户、操作员 |
 | **SPACELAB_TECHNICAL_WHITEPAPER.md** | 技术白皮书 | 开发人员、集成商 |
 | **README.md** | 项目主 README | 所有人 |
-| **CLAUDE.md** | AI 助手开发指南 | AI 辅助开发 |
-| **AGENTS.md** | Agent 工作流规范 | 开发者贡献规范 |
 
 ---
 
 ## 各文档职责
 
-### 1. SPACELAB_USER_MANUAL.md
+### 1. REQUIREMENTS.md
+
+**依赖与运行环境说明**
+
+作为 requirements 的统一入口，说明：
+
+- Python、Node.js、Bun、PowerShell 版本要求
+- `pyproject.toml` extras 的安装方式
+- WebUI 依赖安装方式
+- `.env` 最小配置
+- `scripts/start-spacelab.ps1` / `scripts/stop-spacelab.ps1` 使用方法
+
+### 2. SPACELAB_USER_MANUAL.md
 
 **双屏联动使用手册**
 
@@ -31,7 +42,7 @@
 - 故障排查（页面加载、AI 无响应、思考折叠、DAG 不显示）
 - 环境变量配置说明
 
-### 2. SPACELAB_TECHNICAL_WHITEPAPER.md
+### 3. SPACELAB_TECHNICAL_WHITEPAPER.md
 
 **技术白皮书**
 
@@ -47,7 +58,7 @@
 - 思考标签问题排查
 - 快速开发参考
 
-### 3. README.md
+### 4. README.md
 
 **项目主 README**
 
@@ -62,32 +73,11 @@
 - 技术栈
 - 故障排查指南
 
-### 4. CLAUDE.md
-
-**AI 助手开发指南**
-
-供 AI 编码助手（Cursor Claude 等）理解项目，作为开发时的上下文指导。
-
-### 5. AGENTS.md
-
-**Agent 工作流规范**
-
-面向人类开发者和 AI 代理，说明工作流程规范，包括：
-
-- 项目结构与模块组织
-- 构建、测试、开发命令
-- 代码风格与命名规范
-- 测试指南
-- 提交与 PR 规范
-- 安全与配置提示
-
----
-
 ## .env 与 config.ini 的区别
 
 ### 结论：只使用 `.env`
 
-**LightRAG 项目统一使用 `.env` 文件进行配置，`config.ini.example` 仅作为参考文档存在，不推荐使用。**
+**LightRAG 项目统一使用 `.env` 文件进行配置，`config.ini` 仅作为兼容或参考格式，不推荐新项目使用。**
 
 ### 详细说明
 
@@ -109,9 +99,9 @@ LightRAG 支持三种配置方式（优先级从高到低）：
 
 **什么时候 `config.ini` 会有用：**
 
-`config.ini` 主要用于存储外部数据库（如 Neo4j、MongoDB、PostgreSQL）的连接参数，提供了一种结构化的参考格式。示例文件 `config.ini.example` 列出了所有支持的存储后端配置项。
+`config.ini` 主要用于存储外部数据库（如 Neo4j、MongoDB、PostgreSQL）的连接参数，提供了一种结构化的参考格式。
 
-但实际上，这些参数同样可以通过 `.env` 中的环境变量来配置（参见 `env.example`），两者等价。
+但实际上，这些参数同样可以通过 `.env` 中的环境变量来配置；最小配置示例见 [REQUIREMENTS.md](./REQUIREMENTS.md)。
 
 **使用示例：**
 

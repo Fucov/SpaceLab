@@ -31,6 +31,35 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
+const ACTIVE_EXPERIMENT_STATUSES = new Set<Conversation['experimentStatus']>(['running', 'paused'])
+
+const MODULE_KEYWORDS: Array<{ id: string; keywords: string[] }> = [
+  { id: 'bio-experiment', keywords: ['生物技术', '蛋白', '结晶', '封装', '载荷', '样品', '反应器', '生物反应器'] },
+  { id: 'life-science', keywords: ['生命', '细胞', '培养', '干细胞', '组织', 'msc'] },
+  { id: 'fluid-physics', keywords: ['流体', '毛细', '液滴', '两相流', '界面张力', 'fluid'] },
+  { id: 'material-exp', keywords: ['材料', '金属', '合金', '玻璃', '晶体', 'material'] },
+  { id: 'combustion', keywords: ['燃烧', '火焰', 'soot', '点火', 'combustion'] },
+  { id: 'earth-observe', keywords: ['观测', '遥感', '光谱', '成像', 'observe'] },
+]
+
+function inferModuleId(text: string, fallback?: string) {
+  const lowerText = text.toLowerCase()
+  for (const item of MODULE_KEYWORDS) {
+    if (item.keywords.some((keyword) => lowerText.includes(keyword.toLowerCase()))) {
+      return item.id
+    }
+  }
+  return fallback || 'bio-experiment'
+}
+
+function isActiveExperimentConversation(conv: Conversation) {
+  return conv.kind === 'experiment' && ACTIVE_EXPERIMENT_STATUSES.has(conv.experimentStatus)
+}
+
+function isLegacyMonitorConversation(conv: Conversation) {
+  return conv.kind === 'experiment' && /[-—]\s*监控$/.test(conv.title)
+}
+
 // ================================================================
 // 本地智能回复（LLM 服务不可用时的降级）
 // ================================================================
@@ -106,7 +135,7 @@ function ConversationTabs({ onNew }: { onNew: (kind: Conversation['kind']) => vo
         </div>
       </div>
 
-      {convs.map((conv) => {
+      {convs.filter((conv) => !isActiveExperimentConversation(conv) && !isLegacyMonitorConversation(conv)).map((conv) => {
         const isActive = conv.id === activeId
         const isLocked = conv.locked
         return (
@@ -162,7 +191,7 @@ function ConversationTabs({ onNew }: { onNew: (kind: Conversation['kind']) => vo
 function ActiveExperiments() {
   const convs = useConversationStore((s) => s.conversations)
   const setActive = useConversationStore((s) => s.setActiveConversation)
-  const expConvs = convs.filter((c) => c.kind === 'experiment' && c.linkedModuleId)
+  const expConvs = convs.filter((c) => c.kind === 'experiment' && c.linkedModuleId && ACTIVE_EXPERIMENT_STATUSES.has(c.experimentStatus))
   const labModules = useSpaceLabStore((s) => s.labModules)
 
   const statusLabel = (s?: string) => {
@@ -439,10 +468,7 @@ function ChatArea() {
       const dagSteps = parseDagStepsFromText(fullContent)
       if (dagSteps) {
         // 将 DAG 步骤附加到消息上
-        const msg = conv?.messages.find((m) => m.id === assistantMsgId)
-        if (msg) {
-          useConversationStore.getState().updateMessage(activeId, assistantMsgId, { dagSteps })
-        }
+        useConversationStore.getState().updateMessage(activeId, assistantMsgId, { dagSteps })
         setShowDagEditor(true)
       }
     } catch {
@@ -503,34 +529,47 @@ function ChatArea() {
 
   const handleDagStartExecution = useCallback((request: import('./DagEditor').DagExecutionRequest) => {
     if (!activeId || !conv) return
-    // 1. 锁定当前对话，切换为监控模式
-    useConversationStore.getState().lockConversation(activeId, true)
-    // 2. 获取目标舱体 ID（优先使用会话关联的舱体，否则默认使用燃烧舱）
-    const targetModuleId = conv.linkedModuleId || 'combustion'
+    const inferenceText = [
+      request.title,
+      request.steps.map((s) => `${s.name} ${s.description} ${s.goals.join(' ')} ${s.instrumentParams.map((p) => `${p.key} ${p.value} ${p.unit}`).join(' ')}`).join(' '),
+      messages.map((m) => m.content).join(' '),
+    ].join(' ')
+    const targetModuleId = inferModuleId(inferenceText, conv.linkedModuleId)
     const module = useSpaceLabStore.getState().labModules.find((m) => m.id === targetModuleId)
-    // 3. 将步骤详情映射为执行步骤（添加默认状态）
+    if (!module) return
+
+    // 1. 将步骤详情映射为执行步骤（添加默认状态）
     const executionSteps = request.steps.map((s) => ({
       id: s.id,
       name: s.name,
       status: 'pending' as const,
       parallelGroup: s.parallelGroup,
     }))
-    // 4. 将实验步骤同步到舱体 store 并启动执行
+    const sessionTitle = `${request.title}-${module.name}`
+
+    // 2. 当前对话直接切换为活跃实验，不再新建重复监控会话
+    useConversationStore.getState().updateExperimentSession(activeId, {
+      title: sessionTitle,
+      linkedModuleId: targetModuleId,
+      experimentStatus: 'running',
+      experimentSteps: executionSteps,
+      locked: true,
+    })
+
+    // 3. 将实验步骤同步到舱体 store 并启动执行，同时切换大屏选中舱体
+    useSpaceLabStore.getState().selectModule(targetModuleId)
     useSpaceLabStore.getState().executeExperiment(targetModuleId, executionSteps)
-    // 5. 将步骤也同步到会话 store（供大屏 DAG 显示）
-    setSteps(activeId, executionSteps)
-    // 6. 添加执行告警日志
+
+    // 4. 添加执行告警日志
     useSpaceLabStore.getState().addAlertLog({
       id: `exec-${Date.now()}`,
       timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       level: 'INFO',
       source: '指令系统',
-      message: `[实验启动] ${request.title} - ${executionSteps.length} 个步骤 - 模式: ${request.execution_mode}`,
+      message: `[实验启动] ${sessionTitle} - ${executionSteps.length} 个步骤 - 模式: ${request.execution_mode}`,
     })
-    // 7. 创建新的监控查询会话（当前对话已锁定，用户可开新窗口查询状态）
-    const newConv = useConversationStore.getState().createConversation('experiment', `${request.title} - 监控`)
-    useConversationStore.getState().setActiveConversation(newConv.id)
-    // 8. 显示成功提示
+
+    // 5. 显示成功提示
     toast.success(
       <div className="flex items-start gap-2">
         <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
@@ -538,16 +577,16 @@ function ChatArea() {
           <div className="font-medium">实验已启动</div>
           <div className="text-xs opacity-80">
             {request.title} · {executionSteps.length} 个步骤 · {request.execution_mode === 'sequential' ? '串行' : request.execution_mode === 'parallel' ? '并行' : '混合'}模式
-            {module ? ` · ${module.name}` : ''}
+            · {module.name}
           </div>
           <div className="text-xs opacity-70 mt-0.5">
-            当前会话已锁定 · 请在大屏「活跃实验」监控进度
+            当前会话已移动到「活跃实验」 · 大屏已切换到对应实验舱
           </div>
         </div>
       </div>,
       { duration: 5000 }
     )
-  }, [activeId, conv, setSteps])
+  }, [activeId, conv, messages])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -655,19 +694,6 @@ function ChatArea() {
           </div>
         )}
 
-        {/* 设计实验快捷入口（始终可见） */}
-        {!showDagEditor && !isLoading && (
-          <div className="mt-1.5">
-            <button
-              onClick={() => setShowDagEditor(true)}
-              className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-medium text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-all cursor-pointer"
-            >
-              <FlaskConical className="w-3.5 h-3.5" />
-              打开实验步骤设计器
-            </button>
-          </div>
-        )}
-
         {/* DAG 编辑器浮层 */}
         {showDagEditor && (
           <div className="mt-3 mx-4 mb-1 p-3 bg-blue-50/50 rounded-xl border border-blue-200 shadow-sm">
@@ -689,6 +715,7 @@ function ChatArea() {
                 setShowDagEditor(false)
               }}
               onCancel={() => setShowDagEditor(false)}
+              onStartExecution={handleDagStartExecution}
             />
           </div>
         )}

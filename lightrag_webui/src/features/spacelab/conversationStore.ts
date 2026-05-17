@@ -120,6 +120,10 @@ interface ConversationState {
   // 实验会话特有
   setExperimentSteps: (convId: string, steps: DagStep[]) => void
   setExperimentStatus: (convId: string, status: Conversation['experimentStatus']) => void
+  updateExperimentSession: (
+    convId: string,
+    updates: Pick<Conversation, 'title' | 'linkedModuleId' | 'experimentStatus' | 'experimentSteps' | 'locked'>
+  ) => void
   setDraftParams: (convId: string, draft: ExecutionParams | null) => void
   updateDraftParam: (convId: string, paramKey: string, value: string | number) => void
   lockConversation: (convId: string, locked: boolean) => void
@@ -298,6 +302,15 @@ export const useConversationStore = create<ConversationState>()(
     set((state) => ({
       conversations: state.conversations.map((c) =>
         c.id === convId ? { ...c, experimentStatus: status } : c
+      ),
+    })),
+
+  updateExperimentSession: (convId, updates) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === convId
+          ? { ...c, ...updates, kind: 'experiment' as const, updatedAt: new Date().toLocaleString('zh-CN') }
+          : c
       ),
     })),
 

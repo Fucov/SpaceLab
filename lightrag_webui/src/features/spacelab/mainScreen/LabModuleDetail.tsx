@@ -114,19 +114,52 @@ function DagSvg({ steps }: { steps: DagStep[] }) {
   }, [nodes])
 
   const edges = useMemo(() => {
-    const result: { x1: number; y1: number; x2: number; y2: number; completed: boolean }[] = []
+    const result: { d: string; completed: boolean; fan: boolean; arrow: boolean }[] = []
     for (let gi = 0; gi < groupNodes.length - 1; gi++) {
       const [, prev] = groupNodes[gi]
       const [, next] = groupNodes[gi + 1]
-      const last = prev[prev.length - 1]
-      const first = next[0]
       const done = prev.every((n) => n.step.status === 'completed')
-      result.push({
-        x1: last.x + last.w,
-        y1: last.y + last.h / 2,
-        x2: first.x,
-        y2: first.y + first.h / 2,
-        completed: done,
+      const fan = prev.length > 1 || next.length > 1
+
+      if (!fan) {
+        const from = prev[0]
+        const to = next[0]
+        const x1 = from.x + from.w
+        const y1 = from.y + from.h / 2
+        const x2 = to.x
+        const y2 = to.y + to.h / 2
+        result.push({
+          d: `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`,
+          completed: done,
+          fan: false,
+          arrow: true,
+        })
+        continue
+      }
+
+      const prevYs = prev.map((node) => node.y + node.h / 2)
+      const nextYs = next.map((node) => node.y + node.h / 2)
+      const busX = (prev[0].x + prev[0].w + next[0].x) / 2
+      const minY = Math.min(...prevYs, ...nextYs)
+      const maxY = Math.max(...prevYs, ...nextYs)
+      result.push({ d: `M ${busX} ${minY} L ${busX} ${maxY}`, completed: done, fan: true, arrow: false })
+      prev.forEach((from) => {
+        const y = from.y + from.h / 2
+        result.push({
+          d: `M ${from.x + from.w} ${y} L ${busX} ${y}`,
+          completed: done,
+          fan: true,
+          arrow: false,
+        })
+      })
+      next.forEach((to) => {
+        const y = to.y + to.h / 2
+        result.push({
+          d: `M ${busX} ${y} L ${to.x} ${y}`,
+          completed: done,
+          fan: true,
+          arrow: true,
+        })
       })
     }
     return result
@@ -145,13 +178,15 @@ function DagSvg({ steps }: { steps: DagStep[] }) {
         </defs>
 
         {edges.map((e, i) => (
-          <line key={i}
-            x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
+          <path
+            key={i}
+            d={e.d}
+            fill="none"
             stroke={e.completed ? '#60a5fa' : '#334155'}
             strokeWidth={e.completed ? 1.5 : 1}
-            strokeDasharray={e.completed ? undefined : '4 3'}
+            strokeDasharray={e.fan || !e.completed ? '4 3' : undefined}
             opacity={e.completed ? 0.9 : 0.4}
-            markerEnd={e.completed ? 'url(#dag-arr-active)' : 'url(#dag-arr)'}
+            markerEnd={e.arrow ? (e.completed ? 'url(#dag-arr-active)' : 'url(#dag-arr)') : undefined}
           />
         ))}
 
