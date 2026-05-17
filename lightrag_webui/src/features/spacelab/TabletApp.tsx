@@ -12,18 +12,21 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useConversationStore } from './conversationStore'
 import { useSpaceLabStore } from './store'
-import { queryTextStream } from '@/api/lightrag'
+import { queryTextStream, getDocumentsPaginated } from '@/api/lightrag'
 import MarkdownRenderer from './MarkdownRenderer'
 import { ExperimentDag, ExecutionDraft } from './AgentComponents'
+import { DagEditor } from './DagEditor'
 import ExperimentResultViewer from './ExperimentResultViewer'
 import { UploadButton } from './DocumentPanel'
-import type { Conversation, ChatMessage, HistoryExperiment } from './types'
+import { detectSkill, parseDagStepsFromText, getSkillLabel, SKILLS } from './skills'
+import type { Conversation, ChatMessage, HistoryExperiment, DagStepDetail } from './types'
 import {
   TabletIcon, FlaskConical,
-  BookOpen, X, ChevronDown, ChevronUp, History,
-  Send, Lock, RotateCcw,
+  BookOpen, X,
+  Send, Lock,
   AlertTriangle, Activity,
   BotMessageSquare,
+  RotateCcw,
 } from 'lucide-react'
 
 // ================================================================
@@ -215,74 +218,20 @@ function ActiveExperiments() {
 }
 
 // ================================================================
-// 版本管理器（对话内可折叠）
-// ================================================================
-
-function VersionManager({ convId }: { convId: string }) {
-  const [expanded, setExpanded] = useState(false)
-  const rollback = useConversationStore((s) => s.rollbackToVersion)
-  const createVersion = useConversationStore((s) => s.createVersion)
-  const versions = useConversationStore((s) =>
-    s.conversations.find((c) => c.id === convId)?.versions ?? []
-  )
-
-  if (versions.length === 0) return null
-
-  return (
-    <div className="my-2 rounded-lg border border-gray-100 bg-gray-50 overflow-hidden">
-      <button
-        onClick={() => setExpanded((e) => !e)}
-        className="w-full flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-100 transition-colors"
-      >
-        <History className="w-3.5 h-3.5 text-gray-400" />
-        <span className="text-xs text-gray-500 font-medium">版本历史 ({versions.length})</span>
-        {expanded
-          ? <ChevronUp className="w-3.5 h-3.5 text-gray-400 ml-auto" />
-          : <ChevronDown className="w-3.5 h-3.5 text-gray-400 ml-auto" />
-        }
-      </button>
-      {expanded && (
-        <div className="px-3 pb-2 space-y-1.5 border-t border-gray-100">
-          {[...versions].reverse().map((ver) => (
-            <div key={ver.id} className="flex items-center gap-2 py-1">
-              <span className="text-[10px] text-gray-400 font-mono w-14 shrink-0">{ver.label}</span>
-              <span className="text-[10px] text-gray-400 flex-1">{ver.timestamp}</span>
-              <button
-                onClick={() => rollback(convId, ver.id)}
-                className="cursor-pointer flex items-center gap-1 text-[10px] text-blue-500 hover:text-blue-700 transition-colors"
-              >
-                <RotateCcw className="w-3 h-3" />
-                回退
-              </button>
-            </div>
-          ))}
-          <button
-            onClick={() => createVersion(convId, `快照-${versions.length + 1}`)}
-            className="cursor-pointer text-[10px] text-blue-400 hover:text-blue-600 transition-colors mt-1"
-          >
-            + 创建版本快照
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ================================================================
 // 聊天消息
 // ================================================================
 
-function ChatMessageItem({ msg, convId }: { msg: ChatMessage; convId: string }) {
+function ChatMessageItem({ msg, convId, onRetry, retryCount, onDagConfirm, onDagRegenerate, onDagStartExecution }: {
+  msg: ChatMessage
+  convId: string
+  onRetry?: () => void
+  retryCount?: number
+  onDagConfirm?: (plan: string) => void
+  onDagRegenerate?: (prompt: string) => void
+  onDagStartExecution?: (request: import('./DagEditor').DagExecutionRequest) => void
+}) {
   const isUser = msg.role === 'user'
   const conv = useConversationStore((s) => s.conversations.find((c) => c.id === convId))
-  const [streamingContent, setStreamingContent] = useState('')
-
-  // Track streaming content for typewriter cursor effect
-  useEffect(() => {
-    if (!isUser && !msg.done && msg.content) {
-      setStreamingContent(msg.content)
-    }
-  }, [msg.content, msg.done, isUser])
 
   if (isUser) {
     return (
@@ -313,11 +262,34 @@ function ChatMessageItem({ msg, convId }: { msg: ChatMessage; convId: string }) 
               <span className="ml-1">思考中</span>
             </span>
           )}
+          {msg.done && onRetry && (
+            <button
+              onClick={onRetry}
+              className="cursor-pointer flex items-center gap-1 text-[9px] text-gray-400 hover:text-blue-500 transition-colors ml-1"
+              title="重新生成"
+            >
+              <RotateCcw className="w-3 h-3" />
+              {retryCount && retryCount > 1 ? `重试 ${retryCount}` : '重试'}
+            </button>
+          )}
         </div>
 
         <div className="rounded-2xl rounded-bl-md bg-gray-100 px-4 py-2.5 text-sm leading-relaxed shadow-sm">
-          <MarkdownRenderer content={msg.content} />
+          <MarkdownRenderer content={msg.content} isStreaming={!msg.done} />
         </div>
+
+        {/* 内嵌 DAG 编辑器（从 LLM 响应中解析的步骤） */}
+        {msg.dagSteps && msg.dagSteps.length > 0 && (
+          <div className="mt-2">
+            <DagEditor
+              initialSteps={msg.dagSteps}
+              onConfirm={(_, plan) => onDagConfirm?.(plan)}
+              onRegenerate={onDagRegenerate}
+              onStartExecution={onDagStartExecution}
+              readOnly={false}
+            />
+          </div>
+        )}
 
         {conv?.experimentSteps && conv.experimentSteps.length > 0 && (
           <div className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
@@ -348,8 +320,6 @@ function ChatMessageItem({ msg, convId }: { msg: ChatMessage; convId: string }) 
             onCancel={() => useConversationStore.getState().setDraftParams(convId, null)}
           />
         )}
-
-        <VersionManager convId={convId} />
       </div>
     </div>
   )
@@ -365,13 +335,17 @@ function ChatArea() {
   const addMsg = useConversationStore((s) => s.addMessage)
   const appendMsg = useConversationStore((s) => s.appendStreamingContent)
   const updateMsg = useConversationStore((s) => s.updateStreamingMessage)
-  const createVersion = useConversationStore((s) => s.createVersion)
   const setSteps = useConversationStore((s) => s.setExperimentSteps)
   const labModules = useSpaceLabStore((s) => s.labModules)
+  const addDocument = useSpaceLabStore((s) => s.addDocument)
 
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [selectedHistory, setSelectedHistory] = useState<HistoryExperiment | null>(null)
+  const [retryCounts, setRetryCounts] = useState<Record<string, number> >({})
+  const [showDagEditor, setShowDagEditor] = useState(false)
+  const [executionPlan, setExecutionPlan] = useState<string | null>(null)
+  const [pendingDagSteps, setPendingDagSteps] = useState<DagStepDetail[] | null>(null)
   const messages = conv?.messages ?? []
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -381,61 +355,116 @@ function ChatArea() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length])
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!input.trim() || isLoading || !activeId) return
+  // 挂载时从 API 加载文档列表
+  useEffect(() => {
+    const loadDocs = async () => {
+      try {
+        const res = await getDocumentsPaginated({
+          page: 1, page_size: 50,
+          sort_field: 'created_at', sort_direction: 'desc',
+        })
+        res.documents.forEach((doc) => {
+          addDocument({
+            id: doc.id,
+            name: doc.file_path || doc.id,
+            status: doc.status as 'pending' | 'processing' | 'preprocessed' | 'processed' | 'error',
+            uploadTime: new Date(doc.created_at).toLocaleString('zh-CN'),
+            size: doc.content_length ? `${(doc.content_length / 1024).toFixed(1)} KB` : '--',
+            contentSummary: doc.content_summary,
+            contentLength: doc.content_length,
+            chunksCount: doc.chunks_count,
+            errorMsg: doc.error_msg,
+            createdAt: doc.created_at,
+          })
+        })
+      } catch {
+        // 静默失败，文档面板可以手动刷新
+      }
+    }
+    loadDocs()
+  }, [addDocument])
+
+  const handleSubmit = useCallback(async (e?: React.FormEvent, retryQuery?: string, retryMsgId?: string) => {
+    if (e) e.preventDefault()
+    if (!activeId) return
+
+    const query = retryQuery || input.trim()
+    if (!query.trim() || isLoading) return
+
+    setIsLoading(true)
+    if (!retryQuery) setInput('')
 
     const userMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
-      content: input.trim(),
+      content: query,
       timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
     }
     addMsg(activeId, userMsg)
-    const query = input.trim()
-    setInput('')
-    setIsLoading(true)
-
-    createVersion(activeId, `发送前快照`)
 
     // 创建 assistant 消息占位
-    const assistantMsgId = `msg-${Date.now()}-ai`
-    const assistantMsg: ChatMessage = {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+    const assistantMsgId = retryMsgId || `msg-${Date.now()}-ai`
+    if (!retryMsgId) {
+      const assistantMsg: ChatMessage = {
+        id: assistantMsgId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+        userQuery: query,
+      }
+      addMsg(activeId, assistantMsg)
+    } else {
+      // 重试时清除旧内容
+      updateMsg(activeId, assistantMsgId, '', false)
     }
-    addMsg(activeId, assistantMsg)
+
     let fullContent = ''
+    const retryCount = (retryCounts[assistantMsgId] || 0) + (retryQuery ? 1 : 0)
+
+    // Skills 路由：检测 query 类型并获取对应的 system prompt
+    const detectedSkill = detectSkill(query)
+    const apiRequest = {
+      query,
+      mode: 'mix' as const,
+      stream: true,
+      top_k: 10,
+      system_prompt: detectedSkill.systemPrompt,
+    }
 
     try {
       await queryTextStream(
-        { query, mode: 'mix', stream: true, top_k: 10 },
+        apiRequest,
         (chunk) => {
           fullContent += chunk
           appendMsg(activeId, assistantMsgId, chunk)
         }
       )
-      // Stream completed - mark message as done
       updateMsg(activeId, assistantMsgId, fullContent, true)
+
+      // 尝试从响应中解析 DAG 步骤
+      const dagSteps = parseDagStepsFromText(fullContent)
+      if (dagSteps) {
+        // 将 DAG 步骤附加到消息上
+        const msg = conv?.messages.find((m) => m.id === assistantMsgId)
+        if (msg) {
+          useConversationStore.getState().updateMessage(activeId, assistantMsgId, { dagSteps })
+        }
+        setPendingDagSteps(dagSteps)
+        setShowDagEditor(true)
+      }
     } catch {
-      // LLM 服务不可用，使用本地智能回复
       const local = getLocalResponse(query)
       fullContent = local.reply
       appendMsg(activeId, assistantMsgId, fullContent)
       updateMsg(activeId, assistantMsgId, fullContent, true)
 
-      // 如果本地回复关联了实验舱，更新 DAG 步骤
       if (local.hasDag && local.dagModuleId) {
         const module = labModules.find((m) => m.id === local.dagModuleId)
-        if (module) {
-          setSteps(activeId, module.dagSteps)
-        }
+        if (module) setSteps(activeId, module.dagSteps)
       }
     }
 
-    // 知识类问题也触发实验舱步骤关联
+    // 知识类问题关联实验舱
     if (!fullContent.includes('LightRAG 服务') && conv?.kind === 'experiment') {
       const moduleKeywords = [
         ['combustion', '燃烧'], ['life-science', '细胞'], ['fluid-physics', '流体'],
@@ -462,8 +491,41 @@ function ChatArea() {
       }
     }
 
+    if (retryQuery) {
+      setRetryCounts((prev) => ({ ...prev, [assistantMsgId]: retryCount }))
+    }
     setIsLoading(false)
-  }, [input, isLoading, activeId, conv, addMsg, appendMsg, updateMsg, createVersion, setSteps, labModules])
+  }, [input, isLoading, activeId, conv, addMsg, appendMsg, updateMsg, setSteps, labModules, retryCounts, setExecutionPlan])
+
+  const handleDagConfirm = useCallback((plan: string) => {
+    setExecutionPlan(plan)
+  }, [setExecutionPlan])
+
+  const handleDagRegenerate = useCallback((prompt: string) => {
+    if (!activeId) return
+    // 将修改后的 DAG 描述发回给 AI 重新生成实验描述
+    setInput(prompt)
+    inputRef.current?.focus()
+  }, [activeId])
+
+  const handleDagStartExecution = useCallback((request: import('./DagEditor').DagExecutionRequest) => {
+    if (!activeId || !conv) return
+    // 1. 锁定当前对话，切换为监控模式
+    useConversationStore.getState().lockConversation(activeId, true)
+    // 2. 将实验步骤同步到舱体 store
+    setSteps(activeId, conv.experimentSteps ?? [])
+    // 3. 添加执行告警日志
+    useSpaceLabStore.getState().addAlertLog({
+      id: `exec-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      level: 'INFO',
+      source: '指令系统',
+      message: `[实验启动] ${request.title} - ${request.steps.length} 个步骤 - 模式: ${request.execution_mode}`,
+    })
+    // 4. 创建新的监控查询会话（当前对话已锁定，用户可开新窗口查询状态）
+    const newConv = useConversationStore.getState().createConversation('experiment', `${request.title} - 监控`)
+    useConversationStore.getState().setActiveConversation(newConv.id)
+  }, [activeId, conv, setSteps])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -478,9 +540,26 @@ function ChatArea() {
     <div className="flex flex-col min-h-0 flex-1">
       {/* 消息列表（独立滚动区域） */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0">
-        {messages.map((msg) => (
-          <ChatMessageItem key={msg.id} msg={msg} convId={activeId!} />
-        ))}
+        {messages.map((msg, idx) => {
+          const isLastAssistant = msg.role === 'assistant' && idx === messages.length - 1
+          const userQuery = isLastAssistant
+            ? messages.slice(0, idx).reverse().find((m) => m.role === 'user')?.content
+            : undefined
+          return (
+            <ChatMessageItem
+              key={msg.id}
+              msg={msg}
+              convId={activeId!}
+              onRetry={isLastAssistant && msg.role === 'assistant' && msg.done && userQuery
+                ? () => handleSubmit(undefined, userQuery, msg.id)
+                : undefined}
+              retryCount={retryCounts[msg.id]}
+              onDagConfirm={handleDagConfirm}
+              onDagRegenerate={handleDagRegenerate}
+              onDagStartExecution={handleDagStartExecution}
+            />
+          )
+        })}
 
         {/* 加载指示器 */}
         {isLoading && messages[messages.length - 1]?.role === 'user' && (
@@ -537,9 +616,36 @@ function ChatArea() {
             <Send className="w-4 h-4" />
           </button>
         </form>
-        <div className="text-[10px] text-gray-400 mt-1.5 text-center">
-          Enter 发送 · Shift+Enter 换行 · 提及舱名自动关联实验步骤
+        <div className="text-[10px] text-gray-400 mt-1.5 text-center flex items-center justify-center gap-3">
+          <span>Enter 发送 · Shift+Enter 换行</span>
+          <button
+            onClick={() => { setShowDagEditor((v) => !v); setExecutionPlan(null) }}
+            className="cursor-pointer text-blue-500 hover:text-blue-700 underline underline-offset-2 decoration-blue-300 hover:decoration-blue-500 transition-colors"
+          >
+            设计实验 DAG
+          </button>
         </div>
+
+        {/* DAG 编辑器浮层 */}
+        {showDagEditor && (
+          <div className="mt-3 p-3 bg-blue-50/50 rounded-xl border border-blue-200">
+            <DagEditor
+              onConfirm={(_steps, plan) => {
+                setExecutionPlan(plan)
+                setShowDagEditor(false)
+              }}
+              onCancel={() => setShowDagEditor(false)}
+            />
+          </div>
+        )}
+
+        {/* 执行计划已生成 */}
+        {executionPlan && (
+          <div className="mt-3 p-3 bg-green-50 rounded-xl border border-green-200">
+            <div className="text-xs font-medium text-green-700 mb-2">执行计划已生成</div>
+            <div className="text-xs text-green-600 whitespace-pre-wrap">{executionPlan.slice(0, 300)}...</div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -23,13 +23,14 @@ import type {
 import {
   labModules as initialLabModules,
   alertLogs as initialAlertLogs,
-  documents as initialDocuments,
   computePoolMetrics as initialComputePool,
   agentMetrics as initialAgentMetrics,
   arbitrationAllocations as initialArbitration,
   activeTaskTrackers as initialTrackers,
   globalParams as initialGlobalParams,
 } from './mockData'
+// 文档数据从 API 加载，不再使用 mock 数据
+// import { documents as initialDocuments } from './mockData'
 
 interface SpaceLabState {
   // ========== 核心业务数据 ==========
@@ -120,7 +121,7 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
   // ========== 初始状态 ==========
   labModules: initialLabModules,
   alertLogs: initialAlertLogs,
-  documents: initialDocuments,
+  documents: [] as DocumentItem[],
   chatMessages: [],
   globalParams: initialGlobalParams,
   selectedModuleId: null,
@@ -170,9 +171,15 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
     })),
 
   addDocument: (doc) =>
-    set((state) => ({
-      documents: [doc, ...state.documents],
-    })),
+    set((state) => {
+      const existing = state.documents.find((d) => d.id === doc.id)
+      if (existing) {
+        return {
+          documents: state.documents.map((d) => d.id === doc.id ? { ...d, ...doc } : d),
+        }
+      }
+      return { documents: [doc, ...state.documents] }
+    }),
 
   removeDocument: (id) =>
     set((state) => ({

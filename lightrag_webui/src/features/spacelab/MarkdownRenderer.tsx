@@ -1,80 +1,190 @@
 /**
- * AstroAgent OS - Markdown/HTML 渲染组件
+ * AstroAgent OS - 流式感知 Markdown 渲染器
  *
- * 支持：
- * - GitHub Flavored Markdown (表格、任务列表、删除线)
- * - 数学公式 (remark-math)
- * - 代码高亮
- * - 实验数据链接（自定义渲染）
- * - 流式输出时增量追加
- * - 思考内容折叠（识别 <think> 标签，类似 GPT/DeepSeek）
+ * 核心能力：
+ * - 流式期间实时检测 <think> 块，增量渲染折叠面板
+ * - 流式完成后替换为最终渲染结果
+ * - 支持思维过程折叠、数学公式、代码高亮
  */
 
-import { useState } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { Prism as PrismLight } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import type { Components } from 'react-markdown'
 import { ExternalLink, ChevronDown, Brain } from 'lucide-react'
 
 // ================================================================
-// 思考内容提取与折叠
+// 思考块检测（流式友好）
 // ================================================================
 
 interface ThinkingBlock {
-  raw: string      // 原始 <think>...</think> 标签
-  content: string  // 标签内的思考内容
-  placeholder: string // 替换用的占位符 marker
+  id: number
+  content: string
+  complete: boolean
 }
 
-// 提取所有 <think>...</think> 块，返回处理后的内容和各块列表
-function extractThinkingBlocks(text: string): { processed: string; blocks: ThinkingBlock[] } {
-  const blocks: ThinkingBlock[] = []
-  const placeholder = '__THINKING_BLOCK__'
-  let idx = 0
+// 归一化文本
+function normalizeText(text: string): string {
+  return text
+    .replace(/[\u202F\u00A0\u200B\u3000\u200A\u205F]/g, ' ')
+    .replace(/[\u2000-\u200A]/g, ' ')
+}
 
-  const processed = text.replace(/<think>([\s\S]*?)<\/think>/gi, (match, content) => {
-    const block: ThinkingBlock = {
-      raw: match,
-      content: content.trim(),
-      placeholder: `${placeholder}${idx}__`,
+const THINK_OPEN_PATTERNS = [
+  /<(?:think|Thought|分析|think>)[\s\S]*?>/gi,
+  /<\/?T[\s\S]*?>/gi,
+]
+const THINK_CLOSE_PATTERNS = [
+  /<\/(?:think|Thought|分析|think>)[\s\S]*?>/gi,
+  /<\/?T[\s\S]*?>/gi,
+]
+const THINK_CONTENT_STRIP = /<\/?(?:think|Thought|分析|think|T)[\s\S]*?>/gi
+
+/**
+ * 从累积文本中提取所有思考块（流式增量模式）
+ * 返回已完成的块列表 + 当前未完成的块内容（如果有）
+ */
+function extractThinkingIncremental(
+  text: string,
+  prevBlocks: ThinkingBlock[]
+): { blocks: ThinkingBlock[]; incomplete: string | null } {
+  const normalized = normalizeText(text)
+
+  // 查找所有开始标签的位置
+  const opens: { pos: number; tag: string }[] = []
+  for (const pat of THINK_OPEN_PATTERNS) {
+    const re = new RegExp(pat.source, pat.flags)
+    let m: RegExpExecArray | null
+    while ((m = re.exec(normalized)) !== null) {
+      opens.push({ pos: m.index, tag: m[0] })
     }
-    blocks.push(block)
-    idx++
-    return block.placeholder
-  })
+  }
 
-  return { processed, blocks }
+  // 查找所有结束标签的位置
+  const closes: { pos: number; tag: string }[] = []
+  for (const pat of THINK_CLOSE_PATTERNS) {
+    const re = new RegExp(pat.source, pat.flags)
+    let m: RegExpExecArray | null
+    while ((m = re.exec(normalized)) !== null) {
+      closes.push({ pos: m.index, tag: m[0] })
+    }
+  }
+
+  // 统计：判断是否有完整的块
+  const completeBlocks: ThinkingBlock[] = []
+  let incompleteContent: string | null = null
+
+  if (opens.length === 0 && closes.length === 0) {
+    // 没有思考标签，返回已有的完整块
+    return {
+      blocks: prevBlocks.filter((b) => b.complete),
+      incomplete: null,
+    }
+  }
+
+  if (opens.length === 0 && closes.length > 0) {
+    // 只有闭合标签，说明思考块在最前面已经完成
+    const lastClose = closes[closes.length - 1].pos
+    // 提取最后一个闭合标签之前的内容作为完整思考
+    const maybeComplete = normalized.slice(0, lastClose)
+      .replace(THINK_CONTENT_STRIP, '')
+      .trim()
+    if (maybeComplete && prevBlocks.length === 0) {
+      completeBlocks.push({
+        id: Date.now(),
+        content: maybeComplete,
+        complete: true,
+      })
+    }
+    return {
+      blocks: [...prevBlocks.filter((b) => b.complete), ...completeBlocks],
+      incomplete: null,
+    }
+  }
+
+  // 找到最后一个开始的思考块
+  const lastOpen = opens[opens.length - 1]
+
+  // 检查是否有未闭合的思考块
+  // 统计开标签和闭标签的数量
+  let depth = 0
+  let lastOpenIdx = -1
+  let scanPos = 0
+  const allTags = [
+    ...opens.map((o) => ({ pos: o.pos, type: 'open' as const })),
+    ...closes.map((c) => ({ pos: c.pos, type: 'close' as const })),
+  ].sort((a, b) => a.pos - b.pos)
+
+  for (const tag of allTags) {
+    if (tag.pos > lastOpen.pos && tag.type === 'close') {
+      // 找到了最后一个开始标签之后的第一个闭合标签
+      // 提取内容
+      const openTagEnd = lastOpen.pos + lastOpen.tag.length
+      const content = normalized
+        .slice(openTagEnd, tag.pos)
+        .replace(THINK_CONTENT_STRIP, '')
+        .trim()
+
+      if (content) {
+        completeBlocks.push({
+          id: Date.now() + completeBlocks.length,
+          content,
+          complete: true,
+        })
+      }
+      scanPos = tag.pos + tag.tag.length
+      break
+    }
+  }
+
+  // 检查是否有未完成的块（开始多于闭合）
+  const openedCount = opens.length
+  const closedCount = closes.filter((c) => c.pos > (opens[0]?.pos ?? 0)).length
+
+  if (openedCount > closedCount) {
+    // 有未完成的思考块
+    const openEnd = lastOpen.pos + lastOpen.tag.length
+    const lastClosePos = closes.length > 0 && closes[closes.length - 1].pos > lastOpen.pos
+      ? closes[closes.length - 1].pos
+      : -1
+
+    if (lastClosePos > lastOpen.pos) {
+      // 最后一个开始后面有闭合，已经在上面处理了
+    } else {
+      // 真正的未完成块
+      incompleteContent = normalized
+        .slice(lastOpen.pos + lastOpen.tag.length)
+        .replace(THINK_CONTENT_STRIP, '')
+        .trim()
+    }
+  }
+
+  return {
+    blocks: [...prevBlocks.filter((b) => b.complete), ...completeBlocks],
+    incomplete: incompleteContent,
+  }
 }
 
-// 渲染占位符为折叠面板
-function renderThinkingPlaceholder(
-  placeholder: string,
-  content: string,
-  index: number
-) {
-  return (
-    <ThinkingFoldable
-      key={`think-${placeholder}-${index}`}
-      content={content}
-      defaultExpanded={false}
-    />
-  )
-}
+// ================================================================
+// 思考折叠面板
+// ================================================================
 
-interface ThinkingFoldableProps {
+function ThinkingFoldable({
+  content,
+  defaultExpanded = false,
+}: {
   content: string
   defaultExpanded?: boolean
-}
-
-function ThinkingFoldable({ content, defaultExpanded = false }: ThinkingFoldableProps) {
+}) {
   const [expanded, setExpanded] = useState(defaultExpanded)
+
+  if (!content.trim()) return null
 
   return (
     <div className="my-2 rounded-lg border border-blue-200 bg-blue-50/30 overflow-hidden">
-      {/* 可点击的头部 */}
       <button
         onClick={() => setExpanded((e) => !e)}
         className="w-full flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-blue-100/40 transition-colors text-left"
@@ -85,11 +195,12 @@ function ThinkingFoldable({ content, defaultExpanded = false }: ThinkingFoldable
           思考过程 {expanded ? '(点击收起)' : '(点击展开)'}
         </span>
         <ChevronDown
-          className={`w-3.5 h-3.5 text-blue-400 ml-auto shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 text-blue-400 ml-auto shrink-0 transition-transform duration-200 ${
+            expanded ? 'rotate-180' : ''
+          }`}
         />
       </button>
 
-      {/* 展开内容 */}
       {expanded && (
         <div className="px-3 pb-3 border-t border-blue-100">
           <div className="pt-2 text-xs text-gray-600 leading-relaxed whitespace-pre-wrap font-mono">
@@ -102,49 +213,55 @@ function ThinkingFoldable({ content, defaultExpanded = false }: ThinkingFoldable
 }
 
 // ================================================================
+// 数学公式预处理
+// ================================================================
+
+function preprocessMathBlocks(text: string): string {
+  return text.replace(/```math\s*\n([\s\S]*?)```/g, (_, mathContent) => {
+    const trimmed = mathContent.trim()
+    return `$$\n${trimmed}\n$$`
+  })
+}
+
+// ================================================================
 // Markdown 组件
 // ================================================================
 
-const components: Components = {
-  // 代码块
-  code({ node, className, children, ...props }) {
-    const match = /language-(\w+)/.exec(className || '')
-    const isInline = !match
-    if (isInline) {
-      return (
-        <code
-          className="px-1 py-0.5 rounded bg-gray-100 text-gray-700 font-mono text-[11px] border border-gray-200"
-          {...props}
-        >
-          {children}
-        </code>
-      )
-    }
-    return (
-      <div className="rounded-lg overflow-hidden border border-gray-200 my-2 text-xs">
-        <div className="bg-gray-800 px-3 py-1.5 text-gray-400 text-[10px] font-mono border-b border-gray-700">
-          {match[1]}
-        </div>
-        <SyntaxHighlighter
-          style={oneDark}
-          language={match[1]}
-          PreTag="div"
-          customStyle={{
-            margin: 0,
-            borderRadius: 0,
-            fontSize: '11px',
-            background: '#1e1e1e',
-          }}
-        >
-          {String(children).replace(/\n$/, '')}
-        </SyntaxHighlighter>
-      </div>
-    )
-  },
+const codeStyle = {
+  margin: 0,
+  borderRadius: 0,
+  fontSize: '11px',
+  background: '#1e1e1e',
+}
 
-  // 链接
+const CodeBlock: Components['code'] = ({ className, children }) => {
+  const match = /language-(\w+)/.exec(className || '')
+  const isInline = !match
+  if (isInline) {
+    return (
+      <code
+        className="px-1 py-0.5 rounded bg-gray-100 text-gray-700 font-mono text-[11px] border border-gray-200"
+      >
+        {children}
+      </code>
+    )
+  }
+  return (
+    <div className="rounded-lg overflow-hidden border border-gray-200 my-2 text-xs">
+      <div className="bg-gray-800 px-3 py-1.5 text-gray-400 text-[10px] font-mono border-b border-gray-700">
+        {match[1]}
+      </div>
+      <PrismLight style={oneDark as any} language={match[1]} PreTag="div" customStyle={codeStyle}>
+        {String(children).replace(/\n$/, '')}
+      </PrismLight>
+    </div>
+  )
+}
+
+const components: Components = {
+  code: CodeBlock,
   a({ href, children }) {
-    if (href && (href.startsWith('http') || href.includes('tiankong-station.cn'))) {
+    if (href?.startsWith('http')) {
       return (
         <a href={href} target="_blank" rel="noopener noreferrer"
           className="inline-flex items-center gap-0.5 text-blue-600 hover:text-blue-700 underline underline-offset-2 decoration-blue-300 hover:decoration-blue-500 transition-colors">
@@ -153,14 +270,8 @@ const components: Components = {
         </a>
       )
     }
-    return (
-      <a href={href} className="text-blue-600 hover:text-blue-700 underline underline-offset-2 decoration-blue-300 hover:decoration-blue-500 transition-colors">
-        {children}
-      </a>
-    )
+    return <a href={href} className="text-blue-600 hover:text-blue-700 underline underline-offset-2 decoration-blue-300">{children}</a>
   },
-
-  // 表格
   table({ children }) {
     return (
       <div className="overflow-x-auto my-2">
@@ -169,9 +280,6 @@ const components: Components = {
         </table>
       </div>
     )
-  },
-  thead({ children }) {
-    return <thead className="bg-gray-50">{children}</thead>
   },
   th({ children, align }) {
     return (
@@ -185,26 +293,14 @@ const components: Components = {
   tr({ children }) {
     return <tr className="hover:bg-blue-50/30 transition-colors">{children}</tr>
   },
-
-  // 列表
   ul({ children }) {
     return <ul className="list-disc list-inside space-y-0.5 my-1 text-sm text-gray-700">{children}</ul>
   },
   ol({ children }) {
     return <ol className="list-decimal list-inside space-y-0.5 my-1 text-sm text-gray-700">{children}</ol>
   },
-  li({ children }) {
-    return <li className="text-sm text-gray-700">{children}</li>
-  },
-
-  // 段落
   p({ children }) {
     return <p className="text-sm text-gray-700 leading-relaxed my-1.5">{children}</p>
-  },
-
-  // 标题
-  h1({ children }) {
-    return <h1 className="text-base font-bold text-gray-800 mt-2 mb-1 border-b border-gray-200 pb-1">{children}</h1>
   },
   h2({ children }) {
     return <h2 className="text-sm font-bold text-gray-800 mt-1.5 mb-1">{children}</h2>
@@ -212,56 +308,95 @@ const components: Components = {
   h3({ children }) {
     return <h3 className="text-sm font-semibold text-gray-700 mt-1 mb-0.5">{children}</h3>
   },
-
-  // 引用块
   blockquote({ children }) {
-    return (
-      <blockquote className="border-l-3 border-blue-300 pl-3 py-1 my-1 bg-blue-50/50 rounded-r text-sm text-gray-600 italic">
-        {children}
-      </blockquote>
-    )
+    return <blockquote className="border-l-3 border-blue-300 pl-3 py-1 my-1 bg-blue-50/50 rounded-r text-sm text-gray-600 italic">{children}</blockquote>
   },
-
-  // 水平线
-  hr() {
-    return <hr className="my-2 border-gray-200" />
-  },
-
-  // 强调
   strong({ children }) {
     return <strong className="font-semibold text-gray-800">{children}</strong>
   },
-  em({ children }) {
-    return <em className="text-gray-600">{children}</em>
-  },
 }
 
 // ================================================================
-// 主渲染器
+// 流式渲染器（核心）
 // ================================================================
 
-interface MarkdownRendererProps {
+interface StreamingMarkdownRendererProps {
   content: string
+  isStreaming?: boolean
   className?: string
 }
 
-export default function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
-  const { processed, blocks } = extractThinkingBlocks(content)
+export default function StreamingMarkdownRenderer({
+  content,
+  isStreaming = false,
+  className,
+}: StreamingMarkdownRendererProps) {
+  const [completedBlocks, setCompletedBlocks] = useState<ThinkingBlock[]>([])
+  const [incompleteContent, setIncompleteContent] = useState<string | null>(null)
+  const prevBlocksRef = useRef<ThinkingBlock[]>([])
+
+  // 流式期间：每次 content 变化时增量提取思考块
+  useEffect(() => {
+    if (!isStreaming) {
+      // 流结束后，直接解析所有块
+      const { blocks, incomplete } = extractThinkingIncremental(content, [])
+      setCompletedBlocks(blocks.filter((b) => b.complete))
+      setIncompleteContent(incomplete)
+      return
+    }
+
+    const { blocks, incomplete } = extractThinkingIncremental(content, prevBlocksRef.current)
+
+    // 如果有新的完整块，触发重新渲染
+    const newCompleteBlocks = blocks.filter((b) => b.complete)
+    const prevCompleteCount = prevBlocksRef.current.filter((b) => b.complete).length
+
+    if (newCompleteBlocks.length > prevCompleteCount || incomplete !== incompleteContent) {
+      setCompletedBlocks([...newCompleteBlocks])
+      setIncompleteContent(incomplete)
+      prevBlocksRef.current = blocks
+    }
+  }, [content, isStreaming])
+
+  const preprocessed = useMemo(() => preprocessMathBlocks(content), [content])
+
+  const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], [])
+
+  // 流式期间：从预处理的文本中移除思考块标签，显示为普通文本
+  const markdownForRender = useMemo(() => {
+    if (!isStreaming) return preprocessed
+
+    // 流式期间，先移除完整的思考块，保留未完成的标签让 Markdown 正常渲染
+    return preprocessed.replace(
+      /<(?:think|Thought|分析|think|T)>[\s\S]*?<\/(?:think|Thought|分析|think|T)>|<\/?T>[\s\S]*?<\/?T>/gi,
+      ''
+    )
+  }, [preprocessed, isStreaming])
 
   return (
     <div className={`prose-sm max-w-none ${className || ''}`}>
-      {/* 渲染 <think> 思考块 */}
-      {blocks.map((block, i) =>
-        renderThinkingPlaceholder(block.placeholder, block.content, i)
+      {/* 思考折叠面板（流式期间实时渲染已完成的块） */}
+      {completedBlocks.map((block) => (
+        <ThinkingFoldable key={block.id} content={block.content} />
+      ))}
+
+      {/* 流式期间的未完成思考内容（直接显示在 Markdown 之前） */}
+      {isStreaming && incompleteContent && (
+        <div className="my-2 rounded-lg border border-blue-200 bg-blue-50/30 px-3 py-2">
+          <div className="flex items-center gap-2 mb-1">
+            <Brain className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-[10px] text-blue-500 font-medium">思考中...</span>
+          </div>
+          <div className="text-xs text-gray-500 leading-relaxed whitespace-pre-wrap font-mono animate-pulse">
+            {incompleteContent}
+          </div>
+        </div>
       )}
 
-      {/* 渲染处理后的 Markdown 内容（占位符处留空） */}
-      {processed.trim() && (
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
-          components={components}
-        >
-          {processed}
+      {/* Markdown 内容 */}
+      {markdownForRender.trim() && (
+        <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
+          {markdownForRender}
         </ReactMarkdown>
       )}
     </div>

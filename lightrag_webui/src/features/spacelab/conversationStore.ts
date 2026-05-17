@@ -107,6 +107,7 @@ interface ConversationState {
   // 消息管理
   addMessage: (convId: string, msg: ChatMessage) => void
   updateStreamingMessage: (convId: string, msgId: string, content: string, done?: boolean) => void
+  updateMessage: (convId: string, msgId: string, updates: Partial<ChatMessage>) => void
   appendStreamingContent: (convId: string, msgId: string, chunk: string) => void
   clearMessages: (convId: string) => void
 
@@ -205,6 +206,20 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               ...c,
               messages: c.messages.map((m) =>
                 m.id === msgId ? { ...m, content, done } : m
+              ),
+            }
+          : c
+      ),
+    })),
+
+  updateMessage: (convId, msgId, updates) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === msgId ? { ...m, ...updates } : m
               ),
             }
           : c

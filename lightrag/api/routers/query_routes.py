@@ -110,6 +110,11 @@ class QueryRequest(BaseModel):
         description="If True, enables streaming output for real-time responses. Only affects /query/stream endpoint.",
     )
 
+    system_prompt: Optional[str] = Field(
+        default=None,
+        description="Custom system prompt for the LLM. If provided, overrides the default RAG system prompt.",
+    )
+
     @field_validator("query", mode="after")
     @classmethod
     def query_strip_after(cls, query: str) -> str:
@@ -409,7 +414,11 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             param.stream = False
 
             # Unified approach: always use aquery_llm for both cases
-            result = await rag.aquery_llm(request.query, param=param)
+            result = await rag.aquery_llm(
+                request.query,
+                param=param,
+                system_prompt=request.system_prompt,
+            )
 
             # Extract LLM response and references from unified result
             llm_response = result.get("llm_response", {})
@@ -673,7 +682,11 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             from fastapi.responses import StreamingResponse
 
             # Unified approach: always use aquery_llm for all cases
-            result = await rag.aquery_llm(request.query, param=param)
+            result = await rag.aquery_llm(
+                request.query,
+                param=param,
+                system_prompt=request.system_prompt,
+            )
 
             async def stream_generator():
                 # Extract references and LLM response from unified result

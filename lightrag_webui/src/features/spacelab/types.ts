@@ -175,6 +175,10 @@ export interface ChatMessage {
   timestamp: string
   /** 流式输出时的内容是否已完成 */
   done?: boolean
+  /** 该助手消息对应的用户查询内容（用于重试） */
+  userQuery?: string
+  /** 关联的 DAG 步骤数据（用于实验设计） */
+  dagSteps?: DagStepDetail[]
 }
 
 /** 对话版本快照 */
@@ -272,4 +276,22 @@ export interface ActiveTaskTracker {
   totalSteps: number
   status: 'running' | 'blocked' | 'error'
   blockedReason?: string
+}
+
+/** DAG 实验步骤详情（用于编辑器） */
+export interface DagStepDetail {
+  id: string
+  name: string
+  description: string
+  instrumentParams: InstrumentParam[]
+  prerequisites: string[]
+  goals: string[]
+  parallelGroup: number
+}
+
+export interface InstrumentParam {
+  key: string
+  value: string
+  unit: string
+  editable: boolean
 }
