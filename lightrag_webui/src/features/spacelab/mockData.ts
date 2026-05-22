@@ -546,7 +546,7 @@ export const equipment: Equipment[] = [
 ]
 
 // ================================================================
-// 全局资源仲裁
+// 电力分配
 // ================================================================
 
 export const arbitrationAllocations: ArbitrationAllocation[] = [

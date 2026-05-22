@@ -10,6 +10,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useConversationStore } from './conversationStore'
 import { useSpaceLabStore } from './store'
 import { queryTextStream, getDocumentsPaginated } from '@/api/lightrag'
@@ -21,7 +22,7 @@ import { UploadButton } from './DocumentPanel'
 import { detectSkill, parseDagStepsFromText } from './skills'
 import type { Conversation, ChatMessage, HistoryExperiment } from './types'
 import {
-  TabletIcon, FlaskConical,
+  TabletIcon, FlaskConical, ArrowLeftIcon,
   BookOpen, X,
   Send, Lock,
   AlertTriangle, Activity,
@@ -737,6 +738,7 @@ function ChatArea() {
 // ================================================================
 
 export default function TabletApp() {
+  const navigate = useNavigate()
   const convs = useConversationStore((s) => s.conversations)
   const activeId = useConversationStore((s) => s.activeConvId)
   const createConv = useConversationStore((s) => s.createConversation)
@@ -754,6 +756,14 @@ export default function TabletApp() {
       {/* 顶部导航栏（固定不滚动） */}
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4">
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/spacelab')}
+            className="cursor-pointer flex items-center gap-1 text-xs font-medium text-gray-400 transition-colors hover:text-blue-500"
+          >
+            <ArrowLeftIcon className="w-3.5 h-3.5" />
+            返回
+          </button>
+          <div className="h-4 w-px bg-gray-200" />
           <TabletIcon className="w-5 h-5 text-gray-400" />
           <span className="text-sm font-semibold text-gray-700">天宫智能助手</span>
         </div>

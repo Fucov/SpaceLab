@@ -4,10 +4,11 @@
  * 布局说明（重构后）：
  * 左侧（20%）：算力池 + 智能体调度中心（ComputePanel） + 监控日志（AlertLog）
  * 中央（58%）：实验舱阵列矩阵 / 舱体详情（LabModuleGrid / LabModuleDetail）
- * 右侧（22%）：全站环境参数 + 全局资源仲裁（EquipmentPanel）
+ * 右侧（22%）：全站环境 + 测控网 + 电源系统 + 电力分配（EquipmentPanel）
  */
 
 import { useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import { useSpaceLabStore } from './store'
 import ComputePanel from './mainScreen/ComputePanel'
 import AlertLog from './mainScreen/AlertLog'
@@ -19,6 +20,13 @@ import { ArrowLeftIcon, MonitorIcon } from 'lucide-react'
 export default function SpaceLabApp() {
   const navigate = useNavigate()
   const selectedModuleId = useSpaceLabStore((s) => s.selectedModuleId)
+  const tickTelemetry = useSpaceLabStore((s) => s.tickTelemetry)
+
+  useEffect(() => {
+    tickTelemetry()
+    const id = window.setInterval(tickTelemetry, 2500)
+    return () => window.clearInterval(id)
+  }, [tickTelemetry])
 
   return (
     <div

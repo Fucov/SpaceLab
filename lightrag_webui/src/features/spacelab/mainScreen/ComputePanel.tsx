@@ -60,21 +60,12 @@ function AnimatedNumber({ value, suffix = '' }: { value: number; suffix?: string
 /** 核心算力池 */
 function ComputePoolPanel() {
   const pool = useSpaceLabStore((s) => s.computePool)
-  const [, setTick] = useState(0)
-
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 3000)
-    return () => clearInterval(id)
-  }, [])
-
-  const fluctuate = (v: number, range = 3) =>
-    Math.max(0, Math.min(100, v + (Math.random() - 0.5) * range))
 
   const metrics = [
-    { label: 'CPU', value: Math.round(fluctuate(pool.cpuUsagePercent)), color: '#5b8dd9', Icon: Cpu },
-    { label: 'GPU', value: Math.round(fluctuate(pool.gpuUsagePercent)), color: '#6ba3c9', Icon: Layers },
-    { label: 'RAM', value: Math.round(fluctuate(pool.ramUsagePercent)), color: '#7fb3a0', Icon: Gauge },
-    { label: 'NET', value: Math.round(fluctuate(pool.networkUsagePercent)), color: '#8fa3c2', Icon: Zap },
+    { label: 'CPU', value: pool.cpuUsagePercent, color: '#5b8dd9', Icon: Cpu },
+    { label: 'GPU', value: pool.gpuUsagePercent, color: '#6ba3c9', Icon: Layers },
+    { label: 'RAM', value: pool.ramUsagePercent, color: '#7fb3a0', Icon: Gauge },
+    { label: 'NET', value: pool.networkUsagePercent, color: '#8fa3c2', Icon: Zap },
   ]
 
   return (
@@ -121,8 +112,8 @@ function ComputePoolPanel() {
 
       {/* 温度 */}
       <div className="flex justify-between text-[10px] text-slate-500 px-1">
-        <span>CPU {Math.round(pool.cpuTemp + (Math.random() - 0.5) * 3)}°C</span>
-        <span>GPU {Math.round(pool.gpuTemp + (Math.random() - 0.5) * 4)}°C</span>
+        <span>CPU {pool.cpuTemp}°C</span>
+        <span>GPU {pool.gpuTemp}°C</span>
       </div>
     </div>
   )
@@ -131,15 +122,6 @@ function ComputePoolPanel() {
 /** 智能体调度中心 */
 function AgentMetricsPanel() {
   const metrics = useSpaceLabStore((s) => s.agentMetrics)
-  const [, setTick] = useState(0)
-
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 2000)
-    return () => clearInterval(id)
-  }, [])
-
-  const tokenRate = Math.round(metrics.llmTokenRate + (Math.random() - 0.5) * 800)
-  const latency = Math.round(metrics.inferenceLatencyMs + (Math.random() - 0.5) * 20)
 
   return (
     <div className="flex flex-col gap-3">
@@ -154,7 +136,7 @@ function AgentMetricsPanel() {
         <div className="bg-white/5 rounded-lg px-2 py-2.5 text-center">
           <div className="text-[10px] text-slate-500 mb-1">Token/s</div>
           <div className="text-lg font-bold font-mono text-slate-200">
-            <AnimatedNumber value={tokenRate} />
+            <AnimatedNumber value={metrics.llmTokenRate} />
           </div>
           <div className="text-[9px] text-slate-600">LLM消耗</div>
         </div>
@@ -166,7 +148,7 @@ function AgentMetricsPanel() {
         <div className="bg-white/5 rounded-lg px-2 py-2.5 text-center">
           <div className="text-[10px] text-slate-500 mb-1">延迟</div>
           <div className="text-lg font-bold font-mono text-slate-200">
-            <AnimatedNumber value={latency} />
+            <AnimatedNumber value={metrics.inferenceLatencyMs} />
           </div>
           <div className="text-[9px] text-slate-600">ms P50</div>
         </div>

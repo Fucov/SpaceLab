@@ -1,10 +1,28 @@
 /**
- * 大屏右侧 - 全局资源仲裁分配面板
+ * 大屏右侧 - 环境、测控网、电源和电力分配面板
  * 设计：简洁克制，以数据为主，去掉花哨粒子动画
  */
 
+import { useEffect, useState } from 'react'
 import { useSpaceLabStore } from '../store'
-import { Scale, Zap, Thermometer, Droplets, Gauge, Volume2 } from 'lucide-react'
+import { BatteryCharging, Wifi, Zap, Thermometer, Droplets, Gauge, Volume2, Activity } from 'lucide-react'
+
+interface NetworkInformationLike {
+  downlink?: number
+  rtt?: number
+  effectiveType?: string
+  addEventListener?: (type: 'change', listener: () => void) => void
+  removeEventListener?: (type: 'change', listener: () => void) => void
+}
+
+function getBrowserConnection(): NetworkInformationLike | undefined {
+  const nav = navigator as Navigator & {
+    connection?: NetworkInformationLike
+    mozConnection?: NetworkInformationLike
+    webkitConnection?: NetworkInformationLike
+  }
+  return nav.connection || nav.mozConnection || nav.webkitConnection
+}
 
 /** 全局环境参数（简洁卡片） */
 function GlobalParamsMini() {
@@ -44,15 +62,114 @@ function GlobalParamsMini() {
   )
 }
 
-/** 全局资源仲裁分配（简洁横向条形图） */
-function GlobalArbitration() {
+/** 测控网状态：优先读取浏览器 Network Information API，缺失时使用演示 mock。 */
+function TrackingNetworkStatus() {
+  const [network, setNetwork] = useState({
+    bandwidthMbps: 84,
+    latencyMs: 38,
+    linkType: 'S-band/Ka-band',
+    source: 'mock' as 'browser' | 'mock',
+  })
+
+  useEffect(() => {
+    const connection = getBrowserConnection()
+    if (!connection) return
+
+    const update = () => {
+      setNetwork({
+        bandwidthMbps: Math.max(1, Number((connection.downlink ?? 84).toFixed(1))),
+        latencyMs: Math.max(1, Math.round(connection.rtt ?? 38)),
+        linkType: connection.effectiveType ? connection.effectiveType.toUpperCase() : '实时链路',
+        source: 'browser',
+      })
+    }
+    update()
+    connection.addEventListener?.('change', update)
+    return () => connection.removeEventListener?.('change', update)
+  }, [])
+
+  const packetLoss = network.source === 'browser' ? '<0.1%' : '0.03%'
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2 pb-1 border-b border-white/5">
+        <Wifi className="w-3.5 h-3.5 text-cyan-300" />
+        <span className="text-xs font-semibold text-slate-300 tracking-wider uppercase">测控网状态</span>
+        <span className="ml-auto rounded border border-cyan-400/20 bg-cyan-400/10 px-1.5 py-0.5 text-[9px] text-cyan-200">
+          {network.source === 'browser' ? '实时' : '模拟'}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-white/5 rounded-lg px-3 py-2.5">
+          <div className="text-[10px] text-slate-500 mb-1">测控带宽</div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-xl font-bold font-mono text-cyan-100">{network.bandwidthMbps}</span>
+            <span className="text-xs text-slate-500">Mbps</span>
+          </div>
+          <div className="text-[10px] mt-1 text-cyan-300">{network.linkType}</div>
+        </div>
+        <div className="bg-white/5 rounded-lg px-3 py-2.5">
+          <div className="text-[10px] text-slate-500 mb-1">链路延迟</div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-xl font-bold font-mono text-slate-200">{network.latencyMs}</span>
+            <span className="text-xs text-slate-500">ms</span>
+          </div>
+          <div className="text-[10px] mt-1 text-emerald-300">丢包 {packetLoss}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 电源系统状态（mock 遥测） */
+function PowerSystemStatus() {
+  const generationKw = 18.6
+  const loadKw = 12.8
+  const batteryPercent = 76
+  const batteryRuntime = 4.2
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2 pb-1 border-b border-white/5">
+        <BatteryCharging className="w-3.5 h-3.5 text-emerald-300" />
+        <span className="text-xs font-semibold text-slate-300 tracking-wider uppercase">电源系统</span>
+      </div>
+      <div className="bg-white/5 rounded-lg p-3">
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <div className="text-[10px] text-slate-500 mb-1">太阳翼发电</div>
+            <div className="text-lg font-bold font-mono text-amber-200">{generationKw}<span className="ml-1 text-xs text-slate-500">kW</span></div>
+          </div>
+          <div>
+            <div className="text-[10px] text-slate-500 mb-1">当前负载</div>
+            <div className="text-lg font-bold font-mono text-slate-200">{loadKw}<span className="ml-1 text-xs text-slate-500">kW</span></div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs text-slate-400">蓄电池电量</span>
+          <span className="text-xs font-mono text-emerald-200">{batteryPercent}% · {batteryRuntime}h</span>
+        </div>
+        <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+          <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${batteryPercent}%` }} />
+        </div>
+        <div className="mt-2 flex items-center gap-1.5 text-[10px] text-emerald-300">
+          <Activity className="w-3 h-3" />
+          功率余量 {(generationKw - loadKw).toFixed(1)} kW，供电稳定
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 电力分配（简洁横向条形图） */
+function PowerDistribution() {
   const allocations = useSpaceLabStore((s) => s.arbitrationAllocations)
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2 pb-1 border-b border-white/5">
-        <Scale className="w-3.5 h-3.5 text-slate-400" />
-        <span className="text-xs font-semibold text-slate-300 tracking-wider uppercase">全局仲裁</span>
+        <Zap className="w-3.5 h-3.5 text-yellow-400" />
+        <span className="text-xs font-semibold text-slate-300 tracking-wider uppercase">电力分配</span>
       </div>
 
       {allocations.map((alloc) => (
@@ -129,7 +246,9 @@ export default function EquipmentPanel() {
   return (
     <div className="flex flex-col gap-4">
       <GlobalParamsMini />
-      <GlobalArbitration />
+      <TrackingNetworkStatus />
+      <PowerSystemStatus />
+      <PowerDistribution />
     </div>
   )
 }

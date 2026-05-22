@@ -143,7 +143,7 @@ export interface Equipment {
   icon: string
 }
 
-/** 全局资源仲裁分配项 */
+/** 电力分配项 */
 export interface ArbitrationAllocation {
   id: string
   sourceName: string

@@ -115,6 +115,11 @@ interface SpaceLabState {
    * 模拟实验步骤执行，每个步骤依次推进状态，完成后生成结果
    */
   executeExperiment: (moduleId: string, steps: import('./types').DagStep[]) => void
+
+  /**
+   * 推进一帧演示遥测，让大屏指标按运行负载合理波动
+   */
+  tickTelemetry: () => void
 }
 
 // ============================================================
@@ -122,6 +127,18 @@ interface SpaceLabState {
 // ============================================================
 
 let logCounter = 100
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const driftToward = (current: number, target: number, step: number, jitter: number) => {
+  const direction = (target - current) * step
+  return current + direction + (Math.random() - 0.5) * jitter
+}
+const numericParam = (value: string) => Number.parseFloat(value) || 0
+const trendOf = (next: number, prev: number): GlobalParam['trend'] => {
+  const diff = next - prev
+  if (Math.abs(diff) < 0.05) return 'stable'
+  return diff > 0 ? 'up' : 'down'
+}
 
 export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
   // ========== 初始状态 ==========
@@ -361,6 +378,105 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
     }
 
     return { success: false, message: '' }
+  },
+
+  tickTelemetry: () => {
+    set((state) => {
+      const runningModules = state.labModules.filter((m) => m.status === 'running')
+      const activeCount = runningModules.length
+      const completedCount = state.labModules.filter((m) => m.status === 'completed').length
+      const loadFactor = clamp(activeCount / Math.max(1, state.labModules.length), 0, 1)
+
+      const cpuTarget = 34 + loadFactor * 38 + completedCount * 1.5
+      const gpuTarget = 38 + loadFactor * 42 + (runningModules.some((m) => m.id === 'earth-observe') ? 8 : 0)
+      const ramTarget = 46 + loadFactor * 24
+      const networkTarget = 22 + loadFactor * 32 + (runningModules.some((m) => m.id === 'earth-observe') ? 18 : 0)
+
+      const cpuUsagePercent = Math.round(clamp(driftToward(state.computePool.cpuUsagePercent, cpuTarget, 0.28, 4), 24, 92))
+      const gpuUsagePercent = Math.round(clamp(driftToward(state.computePool.gpuUsagePercent, gpuTarget, 0.24, 5), 18, 96))
+      const ramUsagePercent = Math.round(clamp(driftToward(state.computePool.ramUsagePercent, ramTarget, 0.18, 2.5), 38, 84))
+      const networkUsagePercent = Math.round(clamp(driftToward(state.computePool.networkUsagePercent, networkTarget, 0.24, 5), 12, 88))
+      const cpuTemp = Math.round(clamp(driftToward(state.computePool.cpuTemp, 38 + cpuUsagePercent * 0.32, 0.18, 1.5), 38, 78))
+      const gpuTemp = Math.round(clamp(driftToward(state.computePool.gpuTemp, 42 + gpuUsagePercent * 0.38, 0.16, 1.8), 42, 84))
+
+      const concurrentTasks = Math.round(clamp(3 + activeCount * 1.5 + Math.random() * 2, 2, 12))
+      const llmTokenRate = Math.round(clamp(
+        driftToward(state.agentMetrics.llmTokenRate, 9500 + gpuUsagePercent * 95 + concurrentTasks * 520, 0.3, 700),
+        7600,
+        24500
+      ))
+      const inferenceLatencyMs = Math.round(clamp(
+        driftToward(state.agentMetrics.inferenceLatencyMs, 155 + concurrentTasks * 9 + cpuUsagePercent * 0.65, 0.22, 16),
+        145,
+        360
+      ))
+
+      const tempPrev = numericParam(state.globalParams.find((p) => p.label === '舱内温度')?.value ?? '21.8')
+      const humidityPrev = numericParam(state.globalParams.find((p) => p.label === '相对湿度')?.value ?? '48.2')
+      const pressurePrev = numericParam(state.globalParams.find((p) => p.label === '总气压')?.value ?? '101.2')
+      const noisePrev = numericParam(state.globalParams.find((p) => p.label === '背景噪声')?.value ?? '52.1')
+      const tempNext = clamp(driftToward(tempPrev, 21.6 + loadFactor * 1.2, 0.16, 0.08), 20.8, 23.6)
+      const humidityNext = clamp(driftToward(humidityPrev, 47.5 + loadFactor * 2.2, 0.14, 0.12), 44, 53)
+      const pressureNext = clamp(driftToward(pressurePrev, 101.3, 0.12, 0.04), 100.9, 101.7)
+      const noiseNext = clamp(driftToward(noisePrev, 50.5 + activeCount * 0.9, 0.18, 0.35), 48, 58)
+
+      const globalParams = state.globalParams.map((param) => {
+        const nextByLabel: Record<string, number> = {
+          舱内温度: tempNext,
+          相对湿度: humidityNext,
+          总气压: pressureNext,
+          背景噪声: noiseNext,
+        }
+        const next = nextByLabel[param.label]
+        if (next === undefined) return param
+        const decimals = param.label === '背景噪声' ? 0 : 1
+        return {
+          ...param,
+          value: next.toFixed(decimals),
+          trend: trendOf(next, numericParam(param.value)),
+        }
+      })
+
+      const moduleLoadKw = state.arbitrationAllocations[0]?.targets.map((target) => {
+        const module = state.labModules.find((m) => m.id === target.moduleId)
+        const base = target.moduleId === 'combustion' ? 0.8 : target.moduleId === 'earth-observe' ? 1.5 : 1.2
+        const runningBoost = module?.status === 'running' ? 1.15 + (module.progress / 100) * 0.35 : 0
+        const warningBoost = module?.status === 'error' ? 0.25 : 0
+        return { ...target, currentValue: Number((base + runningBoost + warningBoost).toFixed(2)) }
+      }) ?? []
+      const totalPower = Number(moduleLoadKw.reduce((sum, t) => sum + t.currentValue, 0).toFixed(2))
+      const arbitrationAllocations = state.arbitrationAllocations.map((alloc, index) => {
+        if (index !== 0 || totalPower <= 0) return alloc
+        return {
+          ...alloc,
+          sourceTotal: totalPower,
+          targets: moduleLoadKw.map((target) => ({
+            ...target,
+            percentage: Math.round((target.currentValue / totalPower) * 100),
+          })),
+        }
+      })
+
+      return {
+        computePool: {
+          ...state.computePool,
+          cpuUsagePercent,
+          gpuUsagePercent,
+          ramUsagePercent,
+          networkUsagePercent,
+          cpuTemp,
+          gpuTemp,
+        },
+        agentMetrics: {
+          ...state.agentMetrics,
+          llmTokenRate,
+          concurrentTasks,
+          inferenceLatencyMs,
+        },
+        globalParams,
+        arbitrationAllocations,
+      }
+    })
   },
 
   executeExperiment: (moduleId, steps) => {
