@@ -20,6 +20,7 @@ import type {
   ActiveTaskTracker,
   GlobalParam,
   ScheduledTask,
+  TaskQueueItem,
 } from './types'
 import {
   labModules as initialLabModules,
@@ -117,7 +118,17 @@ interface SpaceLabState {
    * 执行实验流程（从 DAG 编辑器触发）
    * 模拟实验步骤执行，每个步骤依次推进状态，完成后生成结果
    */
-  executeExperiment: (moduleId: string, steps: import('./types').DagStep[]) => void
+  enqueueModuleTask: (moduleId: string, task: TaskQueueItem) => void
+  updateModuleTask: (moduleId: string, taskId: string, patch: Partial<TaskQueueItem>) => void
+  addGlobalScheduledTask: (task: ScheduledTask) => void
+  executeExperiment: (moduleId: string, steps: import('./types').DagStep[], meta?: {
+    title?: string
+    source?: 'tablet' | 'demo' | 'system'
+    executionMode?: 'sequential' | 'parallel' | 'hybrid'
+    priority?: 'high' | 'medium' | 'low'
+    eventId?: string
+    rawRequest?: unknown
+  }) => void
 
   /**
    * 演示跨屏同步：大屏收到平板提交事件后，注入总任务队列和提示日志。
@@ -154,6 +165,10 @@ const trendOf = (next: number, prev: number): GlobalParam['trend'] => {
   const diff = next - prev
   if (Math.abs(diff) < 0.05) return 'stable'
   return diff > 0 ? 'up' : 'down'
+}
+
+function toTs(date = new Date()) {
+  return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
 }
 
 export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
@@ -397,6 +412,43 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
     return { success: false, message: '' }
   },
 
+  enqueueModuleTask: (moduleId, task) =>
+    set((state) => ({
+      labModules: state.labModules.map((module) =>
+        module.id === moduleId
+          ? {
+              ...module,
+              taskQueue: [
+                task,
+                ...module.taskQueue.filter((item) => item.id !== task.id),
+              ].slice(0, 10),
+            }
+          : module
+      ),
+    })),
+
+  updateModuleTask: (moduleId, taskId, patch) =>
+    set((state) => ({
+      labModules: state.labModules.map((module) =>
+        module.id === moduleId
+          ? {
+              ...module,
+              taskQueue: module.taskQueue.map((task) =>
+                task.id === taskId ? { ...task, ...patch } : task
+              ),
+            }
+          : module
+      ),
+    })),
+
+  addGlobalScheduledTask: (task) =>
+    set((state) => ({
+      scheduledTasks: [
+        task,
+        ...state.scheduledTasks.filter((item) => item.id !== task.id),
+      ].map((item, index) => ({ ...item, order: index + 1 })),
+    })),
+
   tickTelemetry: () => {
     set((state) => {
       const runningModules = state.labModules.filter((m) => m.status === 'running')
@@ -496,30 +548,108 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
     })
   },
 
-  executeExperiment: (moduleId, steps) => {
+  executeExperiment: (moduleId, steps, meta = {}) => {
     const state = get()
     const mod = state.labModules.find((m) => m.id === moduleId)
     if (!mod || steps.length === 0) return
 
     const now = new Date()
-    const ts = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
+    const ts = toTs(now)
 
     // 本次显式 DAG 设计应替换舱体当前流程，避免旧 mock 步骤和新步骤混在一起。
     const allSteps = steps.map((s) => ({ ...s, status: 'pending' as const, isActive: false }))
     const totalSteps = allSteps.length
+    const taskTitle = meta.title || allSteps[0]?.name || '未命名实验'
+    const taskId = meta.eventId ? `tablet-task-${meta.eventId}` : `tablet-task-${Date.now()}`
+    const priority = meta.priority || 'medium'
+    const executionMode = meta.executionMode || 'sequential'
+    const source = meta.source || 'tablet'
+    const moduleTask: TaskQueueItem = {
+      id: taskId,
+      name: taskTitle,
+      assignee: source === 'tablet' ? '平板终端' : '系统调度',
+      scheduledTime: ts,
+      priority,
+      moduleId,
+      moduleName: mod.name,
+      source,
+      status: 'running',
+      executionMode,
+      steps: allSteps.map((step, index) => ({
+        id: step.id,
+        name: step.name,
+        status: index === 0 ? 'running' : 'pending',
+        parallelGroup: step.parallelGroup,
+      })),
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      gateSummary: {
+        dependency: 'passed',
+        resource: 'passed',
+        safety: 'passed',
+      },
+    }
+    const scheduledTask: ScheduledTask = {
+      id: taskId,
+      order: Math.max(0, ...state.scheduledTasks.map((task) => task.order)) + 1,
+      moduleId,
+      moduleName: mod.name,
+      taskName: taskTitle,
+      status: 'running',
+      priority,
+      dagStage: allSteps[0]?.name || taskTitle,
+      scheduleHint: `${source === 'tablet' ? '来自平板端的新实验任务' : '系统实验任务'}，${allSteps.length} 个步骤，执行模式：${executionMode}`,
+      gates: {
+        dependency: {
+          status: 'passed',
+          summary: '实验 DAG 已确认',
+          predecessors: [],
+          done: [],
+          satisfied: true,
+        },
+        resource: {
+          status: 'passed',
+          summary: '目标舱室资源已接纳',
+          required: [mod.name],
+          active: [mod.name],
+          conflict: false,
+        },
+        safety: {
+          status: 'passed',
+          summary: '安全门通过',
+          predicate: 'tablet_confirmed=true',
+          satisfied: true,
+        },
+      },
+    }
 
     get().addAlertLog({
       id: `a${++logCounter}`,
       timestamp: ts,
       level: 'INFO',
       source: '实验执行器',
-      message: `实验开始：${mod.name}，共${totalSteps}个步骤`,
+      message: `实验开始：${mod.name} - ${taskTitle}，共${totalSteps}个步骤`,
     })
 
     set((prev) => ({
+      scheduledTasks: [
+        scheduledTask,
+        ...prev.scheduledTasks.filter((task) => task.id !== taskId),
+      ].map((task, index) => ({ ...task, order: index + 1 })),
       labModules: prev.labModules.map((m) =>
         m.id === moduleId
-          ? { ...m, status: 'running', dagSteps: allSteps, currentTask: allSteps[0]?.name }
+          ? {
+              ...m,
+              status: 'running',
+              dagSteps: allSteps,
+              currentTask: taskTitle,
+              currentStepIndex: 1,
+              progress: 0,
+              taskQueue: [
+                moduleTask,
+                ...m.taskQueue.filter((task) => task.id !== taskId),
+              ].slice(0, 10),
+            }
           : m
       ),
     }))
@@ -544,6 +674,11 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
         const stepDuration = Math.round(duration / 1000)
 
         set((prev) => ({
+          scheduledTasks: prev.scheduledTasks.map((task) =>
+            task.id === taskId
+              ? { ...task, status: 'running', dagStage: step.name }
+              : task
+          ),
           labModules: prev.labModules.map((m) =>
             m.id === moduleId
               ? {
@@ -552,6 +687,18 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
                     s.id === step.id ? { ...s, status: 'running', isActive: true } : s
                   ),
                   currentTask: step.name,
+                  taskQueue: m.taskQueue.map((task) =>
+                    task.id === taskId
+                      ? {
+                          ...task,
+                          status: 'running',
+                          updatedAt: new Date().toISOString(),
+                          steps: task.steps?.map((taskStep) =>
+                            taskStep.id === step.id ? { ...taskStep, status: 'running' } : taskStep
+                          ),
+                        }
+                      : task
+                  ),
                 }
               : m
           ),
@@ -564,7 +711,7 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
           const success = Math.random() > 0.05 // 95% 成功率
           const finalStatus = success ? 'completed' : 'error'
           const nowInner = new Date()
-          const tsInner = `${nowInner.getHours().toString().padStart(2, '0')}:${nowInner.getMinutes().toString().padStart(2, '0')}:${nowInner.getSeconds().toString().padStart(2, '0')}`
+          const tsInner = toTs(nowInner)
 
           set((prev) => ({
             labModules: prev.labModules.map((m) =>
@@ -575,6 +722,19 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
                       s.id === innerStep.id
                         ? { ...s, status: finalStatus, duration: `${stepDuration}s`, isActive: false }
                         : s
+                    ),
+                    taskQueue: m.taskQueue.map((task) =>
+                      task.id === taskId
+                        ? {
+                            ...task,
+                            updatedAt: nowInner.toISOString(),
+                            steps: task.steps?.map((taskStep) =>
+                              taskStep.id === innerStep.id
+                                ? { ...taskStep, status: success ? 'completed' : 'failed' }
+                                : taskStep
+                            ),
+                          }
+                        : task
                     ),
                     progress: Math.round(((innerIndex + 1) / totalSteps) * 100),
                   }
@@ -596,9 +756,14 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
             const finalModule = get().labModules.find((m) => m.id === moduleId)
             const hasError = finalModule?.dagSteps.some((s) => s.status === 'error')
             const nowFinal = new Date()
-            const tsFinal = `${nowFinal.getHours().toString().padStart(2, '0')}:${nowFinal.getMinutes().toString().padStart(2, '0')}:${nowFinal.getSeconds().toString().padStart(2, '0')}`
+            const tsFinal = toTs(nowFinal)
 
             set((prev) => ({
+              scheduledTasks: prev.scheduledTasks.map((task) =>
+                task.id === taskId
+                  ? { ...task, status: hasError ? 'failed' : 'completed', dagStage: hasError ? '执行异常' : '全部完成' }
+                  : task
+              ),
               labModules: prev.labModules.map((m) =>
                 m.id === moduleId
                   ? {
@@ -606,6 +771,15 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
                       status: hasError ? 'standby' : 'completed',
                       progress: hasError ? 0 : 100,
                       currentTask: hasError ? '执行异常' : '已完成',
+                      taskQueue: m.taskQueue.map((task) =>
+                        task.id === taskId
+                          ? {
+                              ...task,
+                              status: hasError ? 'failed' : 'completed',
+                              updatedAt: nowFinal.toISOString(),
+                            }
+                          : task
+                      ),
                     }
                   : m
               ),

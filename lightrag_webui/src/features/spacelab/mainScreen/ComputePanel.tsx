@@ -9,7 +9,7 @@
 
 import { useSpaceLabStore } from '../store'
 import { useEffect, useState, useRef } from 'react'
-import { Cpu, Gauge, Zap, Lock, BrainCircuit, Layers, Wifi } from 'lucide-react'
+import { Cpu, Gauge, Zap, Layers, Wifi } from 'lucide-react'
 
 interface NetworkInformationLike {
   downlink?: number
@@ -86,7 +86,7 @@ function ComputePoolPanel() {
   ]
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       {/* 标题 */}
       <div className="flex items-center gap-2 pb-1 border-b border-white/5">
         <Cpu className="w-3.5 h-3.5 text-slate-400" />
@@ -101,7 +101,7 @@ function ComputePoolPanel() {
           { label: '总内存', val: pool.totalRamGB, unit: 'GB' },
           { label: '网络带宽', val: pool.networkBandwidthMbps, unit: 'Mbps' },
         ].map((item) => (
-          <div key={item.label} className="bg-white/5 rounded-lg px-3 py-2.5">
+          <div key={item.label} className="bg-white/5 rounded-lg px-3 py-2">
             <div className="text-[10px] text-slate-500 mb-0.5">{item.label}</div>
             <div className="text-lg font-bold font-mono text-slate-200">
               <AnimatedNumber value={item.val} />
@@ -112,11 +112,11 @@ function ComputePoolPanel() {
       </div>
 
       {/* 使用率 */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-4 gap-1.5">
         {metrics.map((m) => (
           <div key={m.label} className="flex flex-col items-center gap-1">
             <div className="relative flex items-center justify-center">
-              <MiniRing value={m.value} color={m.color} size={44} />
+              <MiniRing value={m.value} color={m.color} size={40} />
               <span className="absolute text-[11px] font-bold text-slate-300">{m.value}%</span>
             </div>
             <div className="flex items-center gap-1">
@@ -174,84 +174,20 @@ function TrackingNetworkStatus() {
         </span>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <div className="bg-white/5 rounded-lg px-3 py-2.5">
-          <div className="text-[10px] text-slate-500 mb-1">测控带宽</div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-lg font-bold font-mono text-cyan-100">{network.bandwidthMbps}</span>
-            <span className="text-xs text-slate-500">Mbps</span>
-          </div>
-          <div className="text-[10px] mt-1 text-cyan-300 truncate">{network.linkType}</div>
-        </div>
-        <div className="bg-white/5 rounded-lg px-3 py-2.5">
-          <div className="text-[10px] text-slate-500 mb-1">链路延迟</div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-lg font-bold font-mono text-slate-200">{network.latencyMs}</span>
-            <span className="text-xs text-slate-500">ms</span>
-          </div>
-          <div className="text-[10px] mt-1 text-emerald-300">丢包 {packetLoss}</div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/** 智能体调度中心 */
-function AgentMetricsPanel() {
-  const metrics = useSpaceLabStore((s) => s.agentMetrics)
-
-  return (
-    <div className="flex flex-col gap-3">
-      {/* 标题 */}
-      <div className="flex items-center gap-2 pb-1 border-b border-white/5">
-        <BrainCircuit className="w-3.5 h-3.5 text-slate-400" />
-        <span className="text-xs font-semibold text-slate-300 tracking-wider uppercase">智能体调度</span>
-      </div>
-
-      {/* 三大指标 */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-white/5 rounded-lg px-2 py-2.5 text-center">
-          <div className="text-[10px] text-slate-500 mb-1">Token/s</div>
-          <div className="text-lg font-bold font-mono text-slate-200">
-            <AnimatedNumber value={metrics.llmTokenRate} />
-          </div>
-          <div className="text-[9px] text-slate-600">LLM消耗</div>
-        </div>
-        <div className="bg-white/5 rounded-lg px-2 py-2.5 text-center">
-          <div className="text-[10px] text-slate-500 mb-1">并发</div>
-          <div className="text-lg font-bold font-mono text-slate-200">{metrics.concurrentTasks}</div>
-          <div className="text-[9px] text-slate-600">运行任务</div>
-        </div>
-        <div className="bg-white/5 rounded-lg px-2 py-2.5 text-center">
-          <div className="text-[10px] text-slate-500 mb-1">延迟</div>
-          <div className="text-lg font-bold font-mono text-slate-200">
-            <AnimatedNumber value={metrics.inferenceLatencyMs} />
-          </div>
-          <div className="text-[9px] text-slate-600">ms P50</div>
-        </div>
-      </div>
-
-      {/* 资源锁列表 */}
-      <div>
-        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mb-2">
-          <Lock className="w-2.5 h-2.5" />
-          资源锁 ({metrics.activeResourceLocks.length})
-        </div>
-        <div className="space-y-1">
-          {metrics.activeResourceLocks.slice(0, 4).map((lock) => (
-            <div key={lock.id} className="flex items-center gap-2 bg-white/5 rounded-lg px-2.5 py-2">
-              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                lock.type === 'physical' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-300'
-              }`}>
-                {lock.type === 'physical' ? 'PHY' : 'LLM'}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="text-[11px] text-slate-300 truncate">{lock.resourceName}</div>
-                <div className="text-[9px] text-slate-600 truncate">{lock.holderTask}</div>
-              </div>
-              <div className="text-[9px] text-slate-500 flex-shrink-0">{lock.moduleName}</div>
+        {[
+          { label: '测控带宽', value: network.bandwidthMbps, unit: 'Mbps', color: 'text-cyan-100' },
+          { label: '链路延迟', value: network.latencyMs, unit: 'ms', color: 'text-slate-200' },
+          { label: '网络制式', value: network.linkType, unit: '', color: 'text-cyan-200' },
+          { label: '丢包率', value: packetLoss, unit: '', color: 'text-emerald-200' },
+        ].map((item) => (
+          <div key={item.label} className="flex h-12 min-w-0 flex-col justify-center rounded-lg bg-white/5 px-3">
+            <div className="truncate text-[10px] text-slate-500">{item.label}</div>
+            <div className={`mt-0.5 truncate font-mono text-sm font-bold ${item.color}`}>
+              {item.value}
+              {item.unit && <span className="ml-1 text-[10px] font-normal text-slate-500">{item.unit}</span>}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -262,7 +198,6 @@ export default function ComputePanel() {
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
       <ComputePoolPanel />
       <TrackingNetworkStatus />
-      <AgentMetricsPanel />
     </div>
   )
 }

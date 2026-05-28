@@ -49,6 +49,24 @@ export interface TaskQueueItem {
   assignee: string
   scheduledTime: string
   priority: 'high' | 'medium' | 'low'
+  moduleId?: string
+  moduleName?: string
+  source?: 'tablet' | 'demo' | 'system'
+  status?: 'queued' | 'running' | 'waiting_dependency' | 'waiting_resource' | 'blocked_by_safety' | 'completed' | 'failed'
+  executionMode?: 'sequential' | 'parallel' | 'hybrid'
+  steps?: Array<{
+    id: string
+    name: string
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'waiting'
+    parallelGroup?: number
+  }>
+  createdAt?: string
+  updatedAt?: string
+  gateSummary?: {
+    dependency: 'passed' | 'waiting' | 'blocked' | 'unchecked'
+    resource: 'passed' | 'waiting' | 'blocked' | 'unchecked'
+    safety: 'passed' | 'waiting' | 'blocked' | 'unchecked'
+  }
   /** 该任务已解析出的参数 */
   parsedParams?: ExecutionParams
 }
@@ -59,7 +77,9 @@ export type ScheduledTaskStatus =
   | 'waiting_dependency'
   | 'waiting_resource'
   | 'safety_rejected'
+  | 'blocked_by_safety'
   | 'completed'
+  | 'failed'
 
 export type ScheduledTaskPriority = 'high' | 'medium' | 'low'
 export type GateCheckStatus = 'passed' | 'waiting' | 'rejected' | 'unchecked'
@@ -385,7 +405,11 @@ export interface DagStepDetail {
 
 export interface InstrumentParam {
   key: string
-  value: string
-  unit: string
-  editable: boolean
+  name?: string
+  value: string | number
+  unit?: string
+  min?: number
+  max?: number
+  step?: number
+  editable?: boolean
 }

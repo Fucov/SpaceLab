@@ -19,7 +19,7 @@ import {
 /* 工具栏按钮组（放在顶部导航栏右侧） */
 /* ================================================================ */
 
-export function UploadButton() {
+export function UploadButton({ showUpload = true }: { showUpload?: boolean }) {
   const documents = useSpaceLabStore((s) => s.documents)
   const addDocument = useSpaceLabStore((s) => s.addDocument)
   const updateDocumentStatus = useSpaceLabStore((s) => s.updateDocumentStatus)
@@ -65,22 +65,24 @@ export function UploadButton() {
       {errorCount > 0 && (
         <span className="text-xs text-red-500 font-medium">{errorCount} 失败</span>
       )}
-      <label className={`cursor-pointer flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-        <Upload className="w-3.5 h-3.5" />
-        {uploading ? '上传中...' : '上传'}
-        <input
-          type="file"
-          accept=".txt,.pdf,.md"
-          multiple
-          className="hidden"
-          onChange={handleUpload}
-          disabled={uploading}
-        />
-      </label>
+      {showUpload && (
+        <label className={`cursor-pointer flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 active:bg-gray-100 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+          <Upload className="w-3.5 h-3.5" />
+          {uploading ? '上传中...' : '上传'}
+          <input
+            type="file"
+            accept=".txt,.pdf,.md"
+            multiple
+            className="hidden"
+            onChange={handleUpload}
+            disabled={uploading}
+          />
+        </label>
+      )}
       <button
         type="button"
         onClick={() => setShowPanel(true)}
-        className="cursor-pointer flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50"
+        className="cursor-pointer flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 active:bg-gray-100"
       >
         <FolderOpen className="w-3.5 h-3.5" />
         文档

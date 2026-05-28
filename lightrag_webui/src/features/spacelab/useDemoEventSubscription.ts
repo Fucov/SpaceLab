@@ -37,18 +37,14 @@ function hasHandled(eventId: string) {
 
 function handleSubmittedExperiment(event: DemoEvent) {
   const store = useSpaceLabStore.getState()
-
-  store.receiveDemoExperimentTask({
-    eventId: event.eventId,
-    moduleId: event.moduleId,
-    moduleName: event.moduleName,
-    title: event.title,
-    steps: event.steps,
-    executionMode: event.executionMode,
-    gateSummary: event.gateSummary,
-  })
   store.selectModule(event.moduleId)
-  store.executeExperiment(event.moduleId, event.steps)
+  store.executeExperiment(event.moduleId, event.steps, {
+    title: event.title,
+    source: 'tablet',
+    executionMode: event.executionMode === 'parallel' || event.executionMode === 'hybrid' ? event.executionMode : 'sequential',
+    priority: 'high',
+    eventId: event.eventId,
+  })
 
   window.setTimeout(() => {
     const current = useSpaceLabStore.getState().selectedModuleId

@@ -19,6 +19,7 @@ import { ExperimentDag, ExecutionDraft } from './AgentComponents'
 import { DagEditor } from './DagEditor'
 import ExperimentResultViewer from './ExperimentResultViewer'
 import { UploadButton } from './DocumentPanel'
+import { VoiceInputControl } from './VoiceInputControl'
 import { detectSkill, parseDagStepsFromText } from './skills'
 import { publishExperimentSubmitted } from './demoEventBus'
 import type { Conversation, ChatMessage, HistoryExperiment, ChatAttachment, DataAnalysisReport, DataColumnStats } from './types'
@@ -35,6 +36,7 @@ import {
   BarChart3,
   Maximize2,
   Minimize2,
+  Cpu,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -407,14 +409,14 @@ function ConversationTabs({ onNew }: { onNew: (kind: Conversation['kind']) => vo
           <button
             onClick={() => onNew('experiment')}
             title="新实验会话"
-            className="cursor-pointer p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors"
+            className="cursor-pointer rounded p-2 text-gray-400 transition-colors hover:bg-blue-50 hover:text-blue-500 active:bg-blue-100"
           >
             <FlaskConical className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => onNew('knowledge')}
             title="新知识问答会话"
-            className="cursor-pointer p-1 text-gray-400 hover:text-green-500 hover:bg-green-50 rounded transition-colors"
+            className="cursor-pointer rounded p-2 text-gray-400 transition-colors hover:bg-green-50 hover:text-green-500 active:bg-green-100"
           >
             <BookOpen className="w-3.5 h-3.5" />
           </button>
@@ -458,7 +460,7 @@ function ConversationTabs({ onNew }: { onNew: (kind: Conversation['kind']) => vo
             {!isLocked && (
               <button
                 onClick={(e) => { e.stopPropagation(); closeConv(conv.id) }}
-                className="cursor-pointer p-0.5 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="cursor-pointer rounded p-1.5 text-gray-300 opacity-80 transition hover:bg-red-50 hover:text-red-400 group-hover:opacity-100 active:bg-red-100"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -513,7 +515,7 @@ function ActiveExperiments() {
           <div
             key={conv.id}
             onClick={() => setActive(conv.id)}
-            className="flex items-center gap-2 rounded-lg px-2.5 py-2 bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer border border-transparent hover:border-gray-200"
+            className="flex cursor-pointer items-center gap-2 rounded-lg border border-transparent bg-gray-50 px-2.5 py-3 transition-colors hover:border-gray-200 hover:bg-gray-100 active:bg-gray-100"
           >
             <span className="text-sm">{module?.icon || '🧪'}</span>
             <div className="flex-1 min-w-0">
@@ -669,6 +671,7 @@ function ChatArea() {
   const [showDagEditor, setShowDagEditor] = useState(false)
   const [executionPlan, setExecutionPlan] = useState<string | null>(null)
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([])
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null)
   const messages = conv?.messages ?? []
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -877,7 +880,7 @@ function ChatArea() {
     if (!activeId || !conv) return
     const inferenceText = [
       request.title,
-      request.steps.map((s) => `${s.name} ${s.description} ${s.goals.join(' ')} ${s.instrumentParams.map((p) => `${p.key} ${p.value} ${p.unit}`).join(' ')}`).join(' '),
+      request.steps.map((s) => `${s.name} ${s.description} ${s.goals.join(' ')} ${s.instrumentParams.map((p) => `${p.name || p.key} ${p.value} ${p.unit || ''}`).join(' ')}`).join(' '),
       messages.map((m) => m.content).join(' '),
     ].join(' ')
     const targetModuleId = inferModuleId(inferenceText, conv.linkedModuleId)
@@ -904,7 +907,13 @@ function ChatArea() {
 
     // 3. 将实验步骤同步到舱体 store 并启动执行，同时切换大屏选中舱体
     useSpaceLabStore.getState().selectModule(targetModuleId)
-    useSpaceLabStore.getState().executeExperiment(targetModuleId, executionSteps)
+    useSpaceLabStore.getState().executeExperiment(targetModuleId, executionSteps, {
+      title: request.title,
+      source: 'tablet',
+      executionMode: request.execution_mode,
+      priority: request.priority ?? 'medium',
+      rawRequest: request,
+    })
 
     // 4. 添加执行告警日志
     useSpaceLabStore.getState().addAlertLog({
@@ -952,7 +961,6 @@ function ChatArea() {
   }
 
   const kindLabel = conv?.kind === 'experiment' ? '描述实验内容或查看数据' : '提问太空科学知识'
-
   return (
     <div className="flex flex-col min-h-0 flex-1">
       {/* 消息列表（独立滚动区域） */}
@@ -1032,6 +1040,9 @@ function ChatArea() {
             ))}
           </div>
         )}
+        {voiceStatus && (
+          <div className="mb-1.5 truncate px-1 text-[11px] text-blue-500">{voiceStatus}</div>
+        )}
         <form onSubmit={handleSubmit} className="flex gap-2 items-end">
           <input
             ref={fileInputRef}
@@ -1046,10 +1057,18 @@ function ChatArea() {
             onClick={() => fileInputRef.current?.click()}
             disabled={isLoading}
             title="上传对话附件"
-            className="cursor-pointer rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-gray-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="cursor-pointer rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 active:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Paperclip className="w-4 h-4" />
           </button>
+          <VoiceInputControl
+            disabled={isLoading}
+            onStatusChange={setVoiceStatus}
+            onTranscript={(text) => {
+              setInput(text)
+              inputRef.current?.focus()
+            }}
+          />
           <textarea
             ref={inputRef}
             value={input}
@@ -1058,15 +1077,16 @@ function ChatArea() {
             placeholder={kindLabel}
             disabled={isLoading}
             rows={1}
-            className="flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-800 placeholder:text-gray-300 outline-none focus:border-blue-400 focus:bg-white focus:ring-1 focus:ring-blue-100 resize-none transition-all disabled:opacity-50"
-            style={{ minHeight: 44, maxHeight: 120 }}
+            className="flex-1 rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3 text-sm text-gray-700 placeholder:text-gray-300 outline-none focus:border-blue-300 focus:bg-white focus:ring-1 focus:ring-blue-100 resize-none transition-all disabled:opacity-50"
+            style={{ minHeight: 48, maxHeight: 120 }}
           />
           <button
             type="submit"
             disabled={isLoading || !input.trim()}
-            className="cursor-pointer rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+            className="cursor-pointer rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 active:bg-blue-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
           >
             <Send className="w-4 h-4" />
+            确认
           </button>
         </form>
         <div className="text-[10px] text-gray-400 mt-1.5 text-center flex items-center justify-center gap-3">
@@ -1136,6 +1156,8 @@ export default function TabletApp() {
   const emergencyStop = useSpaceLabStore((s) => s.emergencyStop)
   const emergencyMode = useSpaceLabStore((s) => s.emergencyMode)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const engineFramework = import.meta.env.VITE_AGENT_ENGINE_FRAMEWORK || 'vLLM'
+  const engineModel = import.meta.env.VITE_AGENT_ENGINE_MODEL || 'Qwen3.6-35B-A3B'
 
   const activeConv = convs.find((c) => c.id === activeId)
 
@@ -1162,7 +1184,7 @@ export default function TabletApp() {
     <div className="fixed inset-0 flex h-screen w-screen flex-col overflow-hidden bg-white">
       {/* 顶部导航栏（固定不滚动） */}
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2">
           <button
             onClick={() => navigate('/spacelab')}
             className="cursor-pointer flex items-center gap-1 text-xs font-medium text-gray-400 transition-colors hover:text-blue-500"
@@ -1177,16 +1199,27 @@ export default function TabletApp() {
         <div className="flex items-center gap-3">
           <button
             onClick={toggleFullscreen}
-            className="cursor-pointer flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-100"
+            className="cursor-pointer flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-100 active:bg-blue-100"
           >
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
             {isFullscreen ? '退出全屏' : '全屏展示'}
           </button>
-          <UploadButton />
+          <div
+            className="group relative flex shrink-0 items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs text-blue-700"
+            title={`框架：${engineFramework}；模型：${engineModel}；模式：流式输出 / RAG增强`}
+          >
+            <Cpu className="h-3.5 w-3.5" />
+            <span className="font-semibold">推理引擎</span>
+            <span className="max-w-[190px] truncate">{engineFramework} · {engineModel}</span>
+            <div className="pointer-events-none absolute right-0 top-full z-20 mt-1 hidden w-max rounded-lg border border-blue-100 bg-white px-3 py-2 text-[11px] text-slate-600 shadow-lg group-hover:block">
+              流式输出 / RAG增强
+            </div>
+          </div>
+          <UploadButton showUpload={false} />
           <button
             onClick={emergencyStop}
             disabled={emergencyMode}
-            className="cursor-pointer flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-100 transition-colors disabled:opacity-40"
+            className="cursor-pointer flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs font-medium text-red-500 hover:bg-red-100 active:bg-red-100 transition-colors disabled:opacity-40"
           >
             <AlertTriangle className="w-3.5 h-3.5" />
             紧急终止
@@ -1201,7 +1234,7 @@ export default function TabletApp() {
       {/* 主内容区：左侧栏 + 聊天（各自独立滚动） */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* 左侧栏：固定宽度，独立滚动 */}
-        <aside className="w-[260px] shrink-0 border-r border-gray-100 overflow-y-auto p-3 bg-gray-50/50">
+        <aside className="w-[220px] shrink-0 border-r border-gray-100 overflow-y-auto p-3 bg-gray-50/50 xl:w-[260px]">
           <ConversationTabs onNew={handleNew} />
           <div className="mt-4 pt-3 border-t border-gray-100">
             <ActiveExperiments />

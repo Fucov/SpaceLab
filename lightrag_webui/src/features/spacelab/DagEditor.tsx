@@ -63,6 +63,50 @@ function dagStepToDetail(step: DagStepDetail): DagStepDetail {
   }
 }
 
+function parseNumericValue(value: string | number) {
+  const parsed = Number.parseFloat(String(value).replace(/,/g, ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function formatNumericValue(value: number, step: number) {
+  const precision = step < 1 ? 1 : 0
+  return value.toFixed(precision)
+}
+
+function getParamRange(param: { key: string; name?: string; value: string | number; unit?: string; min?: number; max?: number; step?: number }) {
+  if (param.min !== undefined && param.max !== undefined && param.step !== undefined) {
+    return { min: param.min, max: param.max, step: param.step }
+  }
+  const raw = `${param.name || param.key} ${param.unit || ''}`.toLowerCase()
+  const numericValue = parseNumericValue(param.value) ?? 0
+
+  if (/温度|temperature|temp|°c|℃|celsius/.test(raw)) {
+    return { min: -100, max: 120, step: 0.1 }
+  }
+  if (/co₂|co2|二氧化碳|carbon/.test(raw)) {
+    return { min: 0, max: 10, step: 0.1 }
+  }
+  if (/湿度|humidity|rh/.test(raw)) {
+    return { min: 0, max: 100, step: 1 }
+  }
+  if (/功率|power|w\b|瓦/.test(raw)) {
+    return { min: 0, max: 500, step: 1 }
+  }
+  if (/压力|pressure|kpa|pa\b/.test(raw)) {
+    return { min: 0, max: 200, step: 0.1 }
+  }
+  if (/体积|容积|volume|ml|l\b/.test(raw)) {
+    return { min: 0, max: 100, step: 0.1 }
+  }
+  if (/时长|时间|duration|time|min|分钟/.test(raw)) {
+    return { min: 0, max: 240, step: 1 }
+  }
+  if (/浓度|concentration|浓缩|%/.test(raw)) {
+    return { min: 0, max: 100, step: 0.1 }
+  }
+  return { min: 0, max: 100, step: 1 }
+}
+
 // ================================================================
 // 步骤编辑器卡片
 // ================================================================
@@ -155,7 +199,7 @@ function StepEditor({
               value={step.description}
               onChange={(e) => onUpdate({ ...step, description: e.target.value })}
               placeholder="描述这个步骤要做什么..."
-              rows={2}
+              rows={1}
               readOnly={readOnly}
               className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-blue-400 resize-none"
             />
@@ -205,40 +249,82 @@ function StepEditor({
           {/* 仪器参数 */}
           <div>
             <label className="text-xs font-medium text-gray-500 block mb-1">仪器参数</label>
-            {step.instrumentParams.map((param, i) => (
-              <div key={i} className="flex items-center gap-1 mb-1">
-                <span className="w-16 text-xs text-gray-500 font-mono shrink-0">{param.key || '参数'}</span>
-                <span className="text-xs text-gray-400">=</span>
-                {readOnly ? (
-                  <span className="text-xs font-mono font-medium text-gray-700">
-                    {param.value}{param.unit}
-                  </span>
-                ) : (
-                  <input
-                    type="text"
-                    value={param.value}
-                    onChange={(e) => {
-                      const params = [...step.instrumentParams]
-                      params[i] = { ...params[i], value: e.target.value }
-                      onUpdate({ ...step, instrumentParams: params })
-                    }}
-                    className="w-20 rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-700 outline-none focus:border-blue-400"
-                    placeholder="值"
-                  />
-                )}
-                <span className="text-xs text-gray-400">{param.unit}</span>
-                {!readOnly && (
-                  <button
-                    onClick={() =>
-                      onUpdate({ ...step, instrumentParams: step.instrumentParams.filter((_, j) => j !== i) })
-                    }
-                    className="cursor-pointer p-0.5 text-gray-300 hover:text-red-400"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            ))}
+            <div className="space-y-1">
+              {step.instrumentParams.map((param, i) => {
+                const numericValue = parseNumericValue(param.value)
+                const range = getParamRange(param)
+                const sliderValue = Math.min(range.max, Math.max(range.min, numericValue ?? range.min))
+                const updateParam = (patch: Partial<typeof param>) => {
+                  const params = [...step.instrumentParams]
+                  params[i] = { ...params[i], ...patch }
+                  onUpdate({ ...step, instrumentParams: params })
+                }
+                const updateParamValue = (value: string | number) => updateParam({ value })
+                const displayName = param.name ?? param.key ?? ''
+                const unit = param.unit ?? ''
+
+                return (
+                  <div key={i} className="flex min-h-[40px] items-center gap-2 rounded-md border border-gray-100 bg-gray-50/70 px-2 py-1.5">
+                    {readOnly ? (
+                      <>
+                        <span className="min-w-0 flex-1 truncate text-xs font-mono text-gray-600">{displayName || '参数'}</span>
+                        <span className="w-28 shrink-0 text-right text-xs font-mono font-medium text-gray-700">
+                          {param.value}{unit}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          value={displayName}
+                          onChange={(e) => updateParam({ name: e.target.value, key: param.key || e.target.value || `param-${i + 1}` })}
+                          className="h-8 w-28 shrink-0 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-blue-400"
+                          placeholder="参数名称"
+                        />
+                        {numericValue !== null ? (
+                        <input
+                          type="range"
+                          min={range.min}
+                          max={range.max}
+                          step={range.step}
+                          value={sliderValue}
+                          onChange={(e) => updateParamValue(formatNumericValue(Number(e.target.value), range.step))}
+                          className="h-8 min-w-[120px] flex-1 cursor-pointer accent-blue-600"
+                        />
+                        ) : (
+                          <div className="min-w-[120px] flex-1" />
+                        )}
+                        <input
+                          type={numericValue !== null ? 'number' : 'text'}
+                          min={range.min}
+                          max={range.max}
+                          step={range.step}
+                          value={param.value}
+                          onChange={(e) => updateParamValue(e.target.value)}
+                          className="h-8 w-[90px] shrink-0 rounded-md border border-gray-200 bg-white px-2 text-xs font-mono text-gray-700 outline-none focus:border-blue-400"
+                        />
+                        <input
+                          type="text"
+                          value={unit}
+                          onChange={(e) => updateParam({ unit: e.target.value })}
+                          className="h-8 w-[60px] shrink-0 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-blue-400"
+                          placeholder="单位"
+                        />
+                        <button
+                          onClick={() =>
+                            onUpdate({ ...step, instrumentParams: step.instrumentParams.filter((_, j) => j !== i) })
+                          }
+                          className="cursor-pointer rounded p-1.5 text-gray-300 hover:bg-red-50 hover:text-red-400 active:bg-red-100"
+                          aria-label="删除参数"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
             {!readOnly && (
               <button
                 onClick={() =>
@@ -246,7 +332,7 @@ function StepEditor({
                     ...step,
                     instrumentParams: [
                       ...step.instrumentParams,
-                      { key: '', value: '', unit: '', editable: true },
+                      { key: `param-${step.instrumentParams.length + 1}`, name: '新参数', value: 0, unit: '', min: 0, max: 100, step: 1, editable: true },
                     ],
                   })
                 }
@@ -519,6 +605,7 @@ export interface DagExecutionRequest {
   steps: DagStepDetail[]
   created_at: string
   execution_mode: 'sequential' | 'parallel' | 'hybrid'
+  priority?: 'high' | 'medium' | 'low'
 }
 
 function serializeDagForExecution(steps: DagStepDetail[]): DagExecutionRequest {
@@ -559,7 +646,7 @@ function generateExecutionPlan(steps: DagStepDetail[]): string {
     if (step.instrumentParams.length > 0) {
       lines.push('**仪器参数**：')
       step.instrumentParams.forEach((p) =>
-        lines.push(`- \`${p.key}\` = **${p.value}** ${p.unit}`)
+        lines.push(`- \`${p.name || p.key}\` = **${p.value}** ${p.unit || ''}`)
       )
       lines.push('')
     }
@@ -740,7 +827,7 @@ export function DagEditor({
     const dagDesc = steps
       .map(
         (s, i) =>
-          `${i + 1}. **${s.name}**\n   说明: ${s.description || '无'}\n   目标: ${s.goals.join('、') || '无'}\n   参数: ${s.instrumentParams.map((p) => `${p.key}=${p.value}${p.unit}`).join(', ') || '无'}\n   并行组: ${s.parallelGroup}`
+          `${i + 1}. **${s.name}**\n   说明: ${s.description || '无'}\n   目标: ${s.goals.join('、') || '无'}\n   参数: ${s.instrumentParams.map((p) => `${p.name || p.key}=${p.value}${p.unit || ''}`).join(', ') || '无'}\n   并行组: ${s.parallelGroup}`
       )
       .join('\n')
     const prompt = `请根据以下修改后的实验 DAG 步骤，重新生成完整的实验设计方案描述：\n\n${dagDesc}\n\n请用 Markdown 格式描述实验流程，重点说明每个步骤的科学目标。`
@@ -808,8 +895,8 @@ export function DagEditor({
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
                       {step.instrumentParams.map((p, j) => (
                         <span key={j} className="text-[10px] font-mono text-gray-600">
-                          {p.key}: {p.value}
-                          {p.unit}
+                          {p.name || p.key}: {p.value}
+                          {p.unit || ''}
                         </span>
                       ))}
                     </div>

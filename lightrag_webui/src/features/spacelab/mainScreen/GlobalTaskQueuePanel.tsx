@@ -8,7 +8,9 @@ const statusText: Record<ScheduledTaskStatus, string> = {
   waiting_dependency: '等待依赖',
   waiting_resource: '等待资源',
   safety_rejected: '安全门拒绝',
+  blocked_by_safety: '安全阻塞',
   completed: '已完成',
+  failed: '失败',
 }
 
 const statusClass: Record<ScheduledTaskStatus, string> = {
@@ -17,7 +19,9 @@ const statusClass: Record<ScheduledTaskStatus, string> = {
   waiting_dependency: 'border-amber-400/25 bg-amber-400/10 text-amber-200',
   waiting_resource: 'border-yellow-400/25 bg-yellow-400/10 text-yellow-200',
   safety_rejected: 'border-red-400/30 bg-red-400/10 text-red-200',
+  blocked_by_safety: 'border-red-400/30 bg-red-400/10 text-red-200',
   completed: 'border-slate-400/15 bg-slate-400/10 text-slate-300',
+  failed: 'border-red-400/30 bg-red-400/10 text-red-200',
 }
 
 const priorityText: Record<ScheduledTask['priority'], string> = {
@@ -118,7 +122,8 @@ export default function GlobalTaskQueuePanel() {
   const blockedCount = tasks.filter((task) =>
     task.status === 'waiting_dependency' ||
     task.status === 'waiting_resource' ||
-    task.status === 'safety_rejected'
+    task.status === 'safety_rejected' ||
+    task.status === 'blocked_by_safety'
   ).length
 
   return (

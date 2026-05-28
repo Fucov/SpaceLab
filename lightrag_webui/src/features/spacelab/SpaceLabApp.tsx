@@ -89,13 +89,13 @@ export default function SpaceLabApp() {
       {/* 主内容区 - 三栏布局 */}
       <div className="flex flex-1 min-h-0 gap-2 bg-blue-500/5 p-2">
         {/* ========== 左侧栏（21%） ========== */}
-        <div className="flex w-[21%] min-w-[220px] flex-col gap-2">
+        <div className="flex h-full min-h-0 w-[21%] min-w-[220px] flex-col gap-3">
           {/* 算力池 + 智能体调度中心 */}
-          <div className="flex-[0.9] overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5">
+          <div className="shrink-0 overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5">
             <ComputePanel />
           </div>
           {/* 总体任务队列 / 告警日志 */}
-          <div className="flex-[1.35] overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5 flex flex-col min-h-0">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5">
             <div className="mb-2 flex shrink-0 rounded border border-white/10 bg-white/[0.03] p-0.5">
               <button
                 onClick={() => setLeftBottomTab('queue')}
