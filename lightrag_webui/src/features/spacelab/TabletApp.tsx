@@ -21,8 +21,9 @@ import ExperimentResultViewer from './ExperimentResultViewer'
 import { UploadButton } from './DocumentPanel'
 import { VoiceInputControl } from './VoiceInputControl'
 import { detectSkill, parseDagStepsFromText } from './skills'
+import { retrieveSharedMemories, withSharedMemoryPrompt } from './sharedMemory'
 import { publishExperimentSubmitted } from './demoEventBus'
-import type { Conversation, ChatMessage, HistoryExperiment, ChatAttachment, DataAnalysisReport, DataColumnStats } from './types'
+import type { Conversation, ChatMessage, HistoryExperiment, ChatAttachment, DataAnalysisReport, DataColumnStats, SharedMemoryDigest } from './types'
 import {
   TabletIcon, FlaskConical, ArrowLeftIcon,
   BookOpen, X,
@@ -37,6 +38,8 @@ import {
   Maximize2,
   Minimize2,
   Cpu,
+  Database,
+  ChevronDown,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -100,10 +103,65 @@ const LOCAL_RESPONSES: Record<string, { reply: string; hasDag?: boolean; dagModu
   observe: {
     reply: '对地观测舱高光谱成像的关键参数：\n\n- 光谱范围：400-2500 nm（VNIR + SWIR）\n- 空间分辨率：30 m（GSD）\n- 幅宽：60 km\n- 信噪比：≥200（@ 550 nm）\n\n典型应用场景：\n1. 叶绿素浓度反演（海面）\n2. 植被指数计算（陆地）\n3. 大气水汽含量（大气）\n\n当前黑潮区域扫描任务正在进行中，预计明天完成。',
   },
+  proteinElectrophoresis: {
+    reply: `<think>
+多角色协同思考
+实验设计智能体：目标是完成蛋白质 SDS-PAGE 分离，重点控制凝胶浓度、上样量、电压和电泳时间。
+资源调度智能体：生物技术舱电泳槽、低温样品架与凝胶成像设备按“制胶/预冷 -> 电泳 -> 成像”串行调度。
+安全监察智能体：参考共享记忆中的缓冲液分离异常，优先检查缓冲液配比、温度、电压和电流稳定性。
+数据分析智能体：以条带清晰度、迁移距离和分子量标定曲线作为结果指标，若拖尾则回查缓冲液和样品盐浓度。
+</think>
+
+建议在生物技术舱开展蛋白质 SDS-PAGE 电泳实验。历史失败记忆提示：缓冲液离子强度偏差和预冷不足会导致条带拖尾，因此本轮把“缓冲液复核”和“低温预平衡”设为前置步骤。
+
+**关键参数**
+- 分离胶：10-12%
+- 上样量：10-20 ug/孔
+- 运行电压：80 V 堆积胶，120 V 分离胶
+- 缓冲液温度：4-10 °C
+
+[DAG_STEPS_START]
+步骤1:样品与缓冲液复核|核对蛋白样品浓度、上样缓冲液和电泳缓冲液配比|确认样品可用;规避缓冲液异常|样品量:15:ug;缓冲液温度:4:°C|低温样品架可用|1
+步骤2:凝胶制备与预平衡|制备 SDS-PAGE 凝胶并完成低温预平衡|形成稳定分离介质;降低热扰动|分离胶浓度:12:%;预平衡时间:20:min|步骤1完成|2
+步骤3:电泳运行|按堆积胶和分离胶阶段运行电泳|完成蛋白条带分离;记录电流变化|堆积电压:80:V;分离电压:120:V;运行时间:70:min|步骤2完成|3
+步骤4:染色成像与质控|完成染色、脱色和凝胶成像|获取条带图像;评估分离质量|成像曝光:250:ms;目标分辨率:20-120:kDa|步骤3完成|4
+步骤5:数据分析与异常回查|计算迁移距离和分子量标定曲线，检查拖尾或弥散|输出结果指标;形成异常处理建议|条带清晰度阈值:0.8:score|步骤4完成|5
+[DAG_STEPS_END]`,
+    hasDag: true,
+    dagModuleId: 'bio-experiment',
+  },
+  lifeCo2: {
+    reply: `<think>
+多角色协同思考
+实验设计智能体：目标是恢复生命科学舱 CO2 闭环并保护正在培养的细胞样本。
+资源调度智能体：先暂停培养任务，再串行调度 CO2 传感器校准、气体阀组检查和培养箱复核。
+安全监察智能体：共享失败记忆显示 CO2 超限会导致任务中断，本轮以 5.0% 附近稳定和温压功率正常为恢复条件。
+数据分析智能体：对比异常前后的 pH、贴壁率和形态图像，判断样本是否可继续纳入实验。
+</think>
+
+生命科学舱 CO2 异常应按“先保安全、再保样本、最后恢复实验”的顺序处理。历史失败记忆表明，CO2 升至约 7.8% 会触发培养任务暂停，并可能造成 pH 漂移和细胞状态下降；因此不要直接重启实验，应先恢复气体闭环。
+
+**规避建议**
+- 立即暂停培养执行链，保持温度 37.0 °C、湿度和压力稳定。
+- 校准 CO2 传感器并检查阀组、气路泄漏与培养箱闭环控制。
+- CO2 连续稳定在 5.0% 附近后，再恢复成像和培养步骤。
+- 将异常窗口内数据单独标记，避免混入正常实验组。
+
+[DAG_STEPS_START]
+步骤1:异常确认与任务暂停|确认 CO2 读数、传感器状态和当前培养任务，暂停非必要动作|避免风险扩大;保护样本|CO2告警阈值:6:%;温度保持:37:°C|收到 CO2 异常告警|1
+步骤2:气体闭环诊断|检查 CO2 传感器、阀组、气路和培养箱闭环控制|定位异常来源;恢复控制链路|目标CO2:5:%;压力范围:95-105:kPa|步骤1完成|2
+步骤3:样本状态复核|采集 pH、显微图像和贴壁率指标|判断样本是否可继续;标记异常窗口|观察时间:6:h;贴壁率阈值:80:%|步骤2完成|3
+步骤4:受控恢复实验|CO2 稳定后恢复培养和成像任务|恢复实验连续性;降低二次异常风险|稳定观察:30:min;功率余量:15:%|步骤2完成;步骤3通过|4
+[DAG_STEPS_END]`,
+    hasDag: true,
+    dagModuleId: 'life-science',
+  },
 }
 
 function getLocalResponse(query: string) {
   const q = query.toLowerCase()
+  if (q.includes('蛋白') || q.includes('电泳') || q.includes('sds-page')) return LOCAL_RESPONSES.proteinElectrophoresis
+  if ((q.includes('co2') || q.includes('co₂')) && (q.includes('生命') || q.includes('培养') || q.includes('异常'))) return LOCAL_RESPONSES.lifeCo2
   if (q.includes('燃烧') || q.includes('火焰') || q.includes('soot') || q.includes('combustion')) return LOCAL_RESPONSES.combustion
   if (q.includes('细胞') || q.includes('培养') || q.includes('干') || q.includes('life')) return LOCAL_RESPONSES.cell
   if (q.includes('流体') || q.includes('毛细') || q.includes('液滴') || q.includes('fluid')) return LOCAL_RESPONSES.fluid
@@ -540,6 +598,54 @@ function ActiveExperiments() {
 // 聊天消息
 // ================================================================
 
+function SharedMemoryPanel({ memories }: { memories?: SharedMemoryDigest[] }) {
+  const [expanded, setExpanded] = useState(false)
+
+  if (!memories || memories.length === 0) return null
+
+  return (
+    <div className="mb-2 overflow-hidden rounded-lg border border-cyan-200 bg-cyan-50/50">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-cyan-100/50"
+        aria-expanded={expanded}
+      >
+        <Database className="h-3.5 w-3.5 shrink-0 text-cyan-600" />
+        <span className="text-xs font-semibold text-cyan-700">检索到的共享记忆</span>
+        <span className="rounded-full bg-cyan-100 px-1.5 py-0.5 text-[10px] font-medium text-cyan-700">
+          {memories.length}
+        </span>
+        <ChevronDown
+          className={`ml-auto h-3.5 w-3.5 shrink-0 text-cyan-500 transition-transform ${expanded ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {expanded && (
+        <div className="space-y-2 border-t border-cyan-100 px-3 py-2.5">
+          {memories.map((memory) => (
+            <div key={memory.id} className="rounded-md bg-white/70 px-2.5 py-2 text-xs shadow-sm">
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-gray-800">{memory.taskInstruction}</div>
+                  <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-gray-500">{memory.summary}</div>
+                </div>
+                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                  memory.label === '成功'
+                    ? 'bg-emerald-50 text-emerald-600'
+                    : 'bg-rose-50 text-rose-600'
+                }`}>
+                  {memory.label}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ChatMessageItem({ msg, convId, onRetry, retryCount, onDagConfirm, onDagRegenerate, onDagStartExecution }: {
   msg: ChatMessage
   convId: string
@@ -605,6 +711,7 @@ function ChatMessageItem({ msg, convId, onRetry, retryCount, onDagConfirm, onDag
         </div>
 
         <div className="rounded-2xl rounded-bl-md bg-gray-100 px-4 py-2.5 text-sm leading-relaxed shadow-sm">
+          <SharedMemoryPanel memories={msg.sharedMemories} />
           <MarkdownRenderer content={msg.content} isStreaming={!msg.done} />
         </div>
 
@@ -774,6 +881,17 @@ function ChatArea() {
       return
     }
 
+    // Skills 路由：检测 query 类型并获取对应的 system prompt
+    const detectedSkill = detectSkill(query)
+    const retrievedMemories = retrieveSharedMemories(query, 3)
+    const sharedMemories: SharedMemoryDigest[] = retrievedMemories.map((memory) => ({
+      id: memory.id,
+      taskInstruction: memory.taskInstruction,
+      label: memory.label,
+      summary: memory.summary,
+      score: memory.score,
+    }))
+
     // 创建 assistant 消息占位
     const assistantMsgId = retryMsgId || `msg-${Date.now()}-ai`
     if (!retryMsgId) {
@@ -783,24 +901,24 @@ function ChatArea() {
         content: '',
         timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
         userQuery: query,
+        sharedMemories,
       }
       addMsg(activeId, assistantMsg)
     } else {
       // 重试时清除旧内容
       updateMsg(activeId, assistantMsgId, '', false)
+      useConversationStore.getState().updateMessage(activeId, assistantMsgId, { sharedMemories, dagSteps: undefined })
     }
 
     let fullContent = ''
     const retryCount = (retryCounts[assistantMsgId] || 0) + (retryQuery ? 1 : 0)
 
-    // Skills 路由：检测 query 类型并获取对应的 system prompt
-    const detectedSkill = detectSkill(query)
     const apiRequest = {
       query,
       mode: 'mix' as const,
       stream: true,
       top_k: 10,
-      system_prompt: detectedSkill.systemPrompt,
+      system_prompt: withSharedMemoryPrompt(detectedSkill.systemPrompt, retrievedMemories),
     }
 
     try {
@@ -812,14 +930,6 @@ function ChatArea() {
         }
       )
       updateMsg(activeId, assistantMsgId, fullContent, true)
-
-      // 尝试从响应中解析 DAG 步骤
-      const dagSteps = parseDagStepsFromText(fullContent)
-      if (dagSteps) {
-        // 将 DAG 步骤附加到消息上
-        useConversationStore.getState().updateMessage(activeId, assistantMsgId, { dagSteps })
-        setShowDagEditor(true)
-      }
     } catch {
       const local = getLocalResponse(query)
       fullContent = local.reply
@@ -830,6 +940,13 @@ function ChatArea() {
         const module = labModules.find((m) => m.id === local.dagModuleId)
         if (module) setSteps(activeId, module.dagSteps)
       }
+    }
+
+    // 尝试从响应中解析 DAG 步骤，LLM 与本地降级回复共用同一逻辑
+    const dagSteps = parseDagStepsFromText(fullContent)
+    if (dagSteps) {
+      useConversationStore.getState().updateMessage(activeId, assistantMsgId, { dagSteps })
+      setShowDagEditor(true)
     }
 
     // 知识类问题关联实验舱

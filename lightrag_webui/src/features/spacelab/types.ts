@@ -249,6 +249,16 @@ export interface ChatMessage {
   attachments?: ChatAttachment[]
   /** 对话内数据处理报告 */
   dataReport?: DataAnalysisReport
+  /** 本轮请求检索到的共享记忆 */
+  sharedMemories?: SharedMemoryDigest[]
+}
+
+export interface SharedMemoryDigest {
+  id: string
+  taskInstruction: string
+  label: '成功' | '失败'
+  summary: string
+  score?: number
 }
 
 export interface ChatAttachment {

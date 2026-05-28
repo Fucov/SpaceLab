@@ -115,6 +115,9 @@ function ThinkingFoldable({
   const [expanded, setExpanded] = useState(defaultExpanded)
 
   if (!content.trim()) return null
+  const foldTitle = /多角色|智能体|资源调度|安全监察|数据分析/.test(content)
+    ? '多角色协同思考'
+    : '思考过程'
 
   return (
     <div className="my-2 rounded-lg border border-blue-200 bg-blue-50/30 overflow-hidden">
@@ -125,7 +128,7 @@ function ThinkingFoldable({
       >
         <Brain className="w-4 h-4 text-blue-500 shrink-0" />
         <span className="text-xs font-medium text-blue-600">
-          {complete ? '思考过程' : '思考中'} {expanded ? '(点击收起)' : '(点击展开)'}
+          {complete ? foldTitle : '思考中'} {expanded ? '(点击收起)' : '(点击展开)'}
         </span>
         <ChevronDown
           className={`w-3.5 h-3.5 text-blue-400 ml-auto shrink-0 transition-transform duration-200 ${
