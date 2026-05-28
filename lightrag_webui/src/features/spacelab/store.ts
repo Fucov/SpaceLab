@@ -120,6 +120,19 @@ interface SpaceLabState {
   executeExperiment: (moduleId: string, steps: import('./types').DagStep[]) => void
 
   /**
+   * 演示跨屏同步：大屏收到平板提交事件后，注入总任务队列和提示日志。
+   */
+  receiveDemoExperimentTask: (input: {
+    eventId: string
+    moduleId: string
+    moduleName: string
+    title: string
+    steps: import('./types').DagStep[]
+    executionMode: string
+    gateSummary?: string
+  }) => void
+
+  /**
    * 推进一帧演示遥测，让大屏指标按运行负载合理波动
    */
   tickTelemetry: () => void
@@ -622,5 +635,76 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
       // 每批间隔 = 批次中最长步骤的估计时间 + 批次间隔
       delay += 6000
     }
+  },
+
+  receiveDemoExperimentTask: ({ eventId, moduleId, moduleName, title, steps, executionMode, gateSummary }) => {
+    const now = new Date()
+    const ts = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
+    const firstStep = steps[0]?.name || title
+    const order = Math.max(0, ...get().scheduledTasks.map((task) => task.order)) + 1
+
+    get().addAlertLog({
+      id: `demo-${eventId}`,
+      timestamp: ts,
+      level: 'INFO',
+      source: '平板终端',
+      message: `来自平板端的新实验任务：${moduleName} - ${title}`,
+    })
+
+    set((state) => ({
+      scheduledTasks: [
+        {
+          id: `demo-task-${eventId}`,
+          order,
+          moduleId,
+          moduleName,
+          taskName: title,
+          status: 'running' as const,
+          priority: 'high' as const,
+          dagStage: firstStep,
+          scheduleHint: `来自平板端的新实验任务，${steps.length} 个步骤，执行模式：${executionMode}${gateSummary ? `；${gateSummary}` : ''}`,
+          gates: {
+            dependency: {
+              status: 'passed' as const,
+              summary: '平板端已确认实验 DAG',
+              predecessors: [],
+              done: [],
+              satisfied: true,
+            },
+            resource: {
+              status: 'passed' as const,
+              summary: '演示总线已接纳任务',
+              required: [moduleName],
+              active: [moduleName],
+              conflict: false,
+            },
+            safety: {
+              status: 'passed' as const,
+              summary: gateSummary || '演示安全门通过',
+              predicate: gateSummary || 'tablet_confirmed=true',
+              satisfied: true,
+            },
+          },
+        },
+        ...state.scheduledTasks,
+      ].map((task, index) => ({ ...task, order: index + 1 })),
+      labModules: state.labModules.map((module) =>
+        module.id === moduleId
+          ? {
+              ...module,
+              taskQueue: [
+                {
+                  id: `demo-module-task-${eventId}`,
+                  name: title,
+                  assignee: '平板终端',
+                  scheduledTime: ts,
+                  priority: 'high' as const,
+                },
+                ...module.taskQueue,
+              ].slice(0, 8),
+            }
+          : module
+      ),
+    }))
   },
 }))

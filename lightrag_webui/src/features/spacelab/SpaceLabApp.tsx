@@ -17,6 +17,7 @@ import LabModuleGrid from './mainScreen/LabModuleGrid'
 import LabModuleDetail from './mainScreen/LabModuleDetail'
 import EquipmentPanel from './mainScreen/EquipmentPanel'
 import { ArrowLeftIcon, Maximize2Icon, Minimize2Icon, MonitorIcon } from 'lucide-react'
+import { useDemoEventSubscription } from './useDemoEventSubscription'
 
 type LeftBottomTab = 'queue' | 'logs'
 
@@ -26,6 +27,8 @@ export default function SpaceLabApp() {
   const tickTelemetry = useSpaceLabStore((s) => s.tickTelemetry)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [leftBottomTab, setLeftBottomTab] = useState<LeftBottomTab>('queue')
+
+  useDemoEventSubscription()
 
   useEffect(() => {
     tickTelemetry()

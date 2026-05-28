@@ -20,6 +20,7 @@ import { DagEditor } from './DagEditor'
 import ExperimentResultViewer from './ExperimentResultViewer'
 import { UploadButton } from './DocumentPanel'
 import { detectSkill, parseDagStepsFromText } from './skills'
+import { publishExperimentSubmitted } from './demoEventBus'
 import type { Conversation, ChatMessage, HistoryExperiment, ChatAttachment, DataAnalysisReport, DataColumnStats } from './types'
 import {
   TabletIcon, FlaskConical, ArrowLeftIcon,
@@ -914,18 +915,28 @@ function ChatArea() {
       message: `[实验启动] ${sessionTitle} - ${executionSteps.length} 个步骤 - 模式: ${request.execution_mode}`,
     })
 
-    // 5. 显示成功提示
+    // 5. 发布演示总线事件：同设备多标签页使用 BroadcastChannel/localStorage，跨设备可由后端 SSE 接力。
+    publishExperimentSubmitted({
+      moduleId: targetModuleId,
+      moduleName: module.name,
+      title: request.title,
+      steps: executionSteps,
+      executionMode: request.execution_mode,
+      gateSummary: '平板端已确认执行',
+    })
+
+    // 6. 显示成功提示
     toast.success(
       <div className="flex items-start gap-2">
         <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
         <div>
-          <div className="font-medium">实验已启动</div>
+          <div className="font-medium">实验任务已发送至展示大屏</div>
           <div className="text-xs opacity-80">
             {request.title} · {executionSteps.length} 个步骤 · {request.execution_mode === 'sequential' ? '串行' : request.execution_mode === 'parallel' ? '并行' : '混合'}模式
             · {module.name}
           </div>
           <div className="text-xs opacity-70 mt-0.5">
-            当前会话已移动到「活跃实验」 · 大屏已切换到对应实验舱
+            当前会话已移动到「活跃实验」 · 大屏将同步接收任务
           </div>
         </div>
       </div>,
