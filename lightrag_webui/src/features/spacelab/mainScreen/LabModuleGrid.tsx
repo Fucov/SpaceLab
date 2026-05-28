@@ -5,7 +5,7 @@
 import { useSpaceLabStore } from '../store'
 import type { LabModule, LabModuleStatus } from '../types'
 import { Thermometer, Gauge, Zap } from 'lucide-react'
-import LabCabinet3D from './LabCabinet3D'
+import LabModulePreview3D from './3d/LabModulePreview3D'
 
 const statusConfig: Record<LabModuleStatus, { label: string; color: string; dot: string }> = {
   standby:   { label: '待机', color: 'text-slate-400', dot: 'bg-slate-500' },
@@ -28,7 +28,7 @@ function ModuleCard({ module, onClick }: { module: LabModule; onClick: () => voi
       className="group grid min-h-[184px] cursor-pointer grid-cols-[35%_1fr] gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-left transition-all hover:border-white/20 hover:bg-white/10"
     >
       <div className="min-w-0 self-stretch">
-        <LabCabinet3D module={module} compact height="100%" />
+        <LabModulePreview3D module={module} height="100%" />
       </div>
 
       <div className="flex min-w-0 flex-col">

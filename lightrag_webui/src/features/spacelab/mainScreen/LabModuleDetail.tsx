@@ -9,7 +9,8 @@ import { useMemo } from 'react'
 import type { LabModule, DagStep, HistoryExperiment } from '../types'
 import { ArrowLeftIcon, BarChart3, ChevronDown, ChevronUp, ExternalLink, FileText } from 'lucide-react'
 import ExperimentResultViewer from '../ExperimentResultViewer'
-import LabCabinet3D from './LabCabinet3D'
+import LabModuleDetail3D from './3d/LabModuleDetail3D'
+import { getActiveInstrument } from './3d/LabModule3DScene'
 
 // ================================================================
 // 子组件 1：传感器网格
@@ -334,6 +335,7 @@ export default function LabModuleDetail() {
       : module.status === 'paused' ? '已暂停'
       : '待机'
     : ''
+  const activeInstrument = module && activeStep ? getActiveInstrument(module, activeStep.name) : module ? getActiveInstrument(module) : null
 
   return (
     <div className="flex flex-col h-full">
@@ -353,10 +355,8 @@ export default function LabModuleDetail() {
           {/* 顶部：3D 实验柜 + 状态概览 */}
           <div className="shrink-0 px-3 pb-3">
             <div className="grid grid-cols-[43%_1fr] gap-3">
-              <LabCabinet3D
+              <LabModuleDetail3D
                 module={module}
-                interactive
-                autoRotate={false}
                 height={286}
                 currentStepId={activeStep?.id}
                 currentStepName={activeStep?.name}
@@ -397,7 +397,8 @@ export default function LabModuleDetail() {
                 </div>
 
                 <div className="mt-3 rounded border border-white/10 bg-white/[0.04] px-3 py-2">
-                  <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-white/30">当前任务</div>
+                  <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-white/30">当前激活设备</div>
+                  <div className="mb-1 text-xs font-semibold text-white/80">{activeInstrument?.label ?? '舱体监控'}</div>
                   <div className="text-xs leading-relaxed text-white/75">{module.currentTask}</div>
                 </div>
 
