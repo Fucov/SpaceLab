@@ -19,6 +19,7 @@ import type {
   ArbitrationAllocation,
   ActiveTaskTracker,
   GlobalParam,
+  ScheduledTask,
 } from './types'
 import {
   labModules as initialLabModules,
@@ -28,6 +29,7 @@ import {
   arbitrationAllocations as initialArbitration,
   activeTaskTrackers as initialTrackers,
   globalParams as initialGlobalParams,
+  scheduledTasks as initialScheduledTasks,
 } from './mockData'
 // 文档数据从 API 加载，不再使用 mock 数据
 // import { documents as initialDocuments } from './mockData'
@@ -39,6 +41,7 @@ interface SpaceLabState {
   documents: DocumentItem[]
   chatMessages: ChatMessage[]
   globalParams: GlobalParam[]
+  scheduledTasks: ScheduledTask[]
 
   // ========== 选中和视图状态 ==========
   selectedModuleId: string | null
@@ -147,6 +150,7 @@ export const useSpaceLabStore = create<SpaceLabState>((set, get) => ({
   documents: [] as DocumentItem[],
   chatMessages: [],
   globalParams: initialGlobalParams,
+  scheduledTasks: initialScheduledTasks,
   selectedModuleId: null,
   selectedHistoryId: null,
   computePool: initialComputePool,

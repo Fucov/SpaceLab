@@ -53,6 +53,52 @@ export interface TaskQueueItem {
   parsedParams?: ExecutionParams
 }
 
+export type ScheduledTaskStatus =
+  | 'running'
+  | 'ready'
+  | 'waiting_dependency'
+  | 'waiting_resource'
+  | 'safety_rejected'
+  | 'completed'
+
+export type ScheduledTaskPriority = 'high' | 'medium' | 'low'
+export type GateCheckStatus = 'passed' | 'waiting' | 'rejected' | 'unchecked'
+
+export interface GateCheckDetail {
+  status: GateCheckStatus
+  summary: string
+}
+
+export interface ScheduledTaskGateDetails {
+  dependency: GateCheckDetail & {
+    predecessors: string[]
+    done: string[]
+    satisfied: boolean
+  }
+  resource: GateCheckDetail & {
+    required: string[]
+    active: string[]
+    conflict: boolean
+  }
+  safety: GateCheckDetail & {
+    predicate: string
+    satisfied: boolean
+  }
+}
+
+export interface ScheduledTask {
+  id: string
+  order: number
+  moduleId: string
+  moduleName: string
+  taskName: string
+  status: ScheduledTaskStatus
+  priority: ScheduledTaskPriority
+  dagStage: string
+  scheduleHint: string
+  gates: ScheduledTaskGateDetails
+}
+
 export interface HistoryExperiment {
   id: string
   name: string

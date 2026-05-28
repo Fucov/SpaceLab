@@ -2,7 +2,7 @@
  * 大屏主控应用（天宫智能助手 演示大屏）
  *
  * 布局说明（重构后）：
- * 左侧（21%）：算力与链路 + 智能体调度中心（ComputePanel） + 监控日志（AlertLog）
+ * 左侧（21%）：算力与链路 + 智能体调度中心（ComputePanel） + 总体任务队列/告警日志
  * 中央（57%）：实验舱阵列矩阵 / 舱体详情（LabModuleGrid / LabModuleDetail）
  * 右侧（22%）：全站环境 + 电源系统 + 电力分配（EquipmentPanel）
  */
@@ -12,16 +12,20 @@ import { useEffect, useState } from 'react'
 import { useSpaceLabStore } from './store'
 import ComputePanel from './mainScreen/ComputePanel'
 import AlertLog from './mainScreen/AlertLog'
+import GlobalTaskQueuePanel from './mainScreen/GlobalTaskQueuePanel'
 import LabModuleGrid from './mainScreen/LabModuleGrid'
 import LabModuleDetail from './mainScreen/LabModuleDetail'
 import EquipmentPanel from './mainScreen/EquipmentPanel'
 import { ArrowLeftIcon, Maximize2Icon, Minimize2Icon, MonitorIcon } from 'lucide-react'
+
+type LeftBottomTab = 'queue' | 'logs'
 
 export default function SpaceLabApp() {
   const navigate = useNavigate()
   const selectedModuleId = useSpaceLabStore((s) => s.selectedModuleId)
   const tickTelemetry = useSpaceLabStore((s) => s.tickTelemetry)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [leftBottomTab, setLeftBottomTab] = useState<LeftBottomTab>('queue')
 
   useEffect(() => {
     tickTelemetry()
@@ -84,12 +88,34 @@ export default function SpaceLabApp() {
         {/* ========== 左侧栏（21%） ========== */}
         <div className="flex w-[21%] min-w-[220px] flex-col gap-2">
           {/* 算力池 + 智能体调度中心 */}
-          <div className="flex-[1.2] overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5">
+          <div className="flex-[0.9] overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5">
             <ComputePanel />
           </div>
-          {/* 监控日志 */}
-          <div className="flex-1 overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5 flex flex-col min-h-0">
-            <AlertLog />
+          {/* 总体任务队列 / 告警日志 */}
+          <div className="flex-[1.35] overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5 flex flex-col min-h-0">
+            <div className="mb-2 flex shrink-0 rounded border border-white/10 bg-white/[0.03] p-0.5">
+              <button
+                onClick={() => setLeftBottomTab('queue')}
+                className={`flex-1 cursor-pointer rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                  leftBottomTab === 'queue'
+                    ? 'bg-cyan-400/15 text-cyan-100'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                任务队列
+              </button>
+              <button
+                onClick={() => setLeftBottomTab('logs')}
+                className={`flex-1 cursor-pointer rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                  leftBottomTab === 'logs'
+                    ? 'bg-cyan-400/15 text-cyan-100'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                告警日志
+              </button>
+            </div>
+            {leftBottomTab === 'queue' ? <GlobalTaskQueuePanel /> : <AlertLog />}
           </div>
         </div>
 
