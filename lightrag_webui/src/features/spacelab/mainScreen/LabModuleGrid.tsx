@@ -25,7 +25,7 @@ function ModuleCard({ module, onClick }: { module: LabModule; onClick: () => voi
   return (
     <button
       onClick={onClick}
-      className="group grid min-h-[178px] cursor-pointer grid-cols-[31%_1fr] gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-left transition-all hover:border-white/20 hover:bg-white/10"
+      className="group grid min-h-[184px] cursor-pointer grid-cols-[35%_1fr] gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-left transition-all hover:border-white/20 hover:bg-white/10"
     >
       <div className="min-w-0 self-stretch">
         <LabCabinet3D module={module} compact height="100%" />

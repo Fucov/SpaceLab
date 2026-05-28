@@ -318,6 +318,8 @@ export default function LabModuleDetail() {
   const selectedHistory = selectedHistoryId
     ? labModules.flatMap((m) => m.history).find((h) => h.id === selectedHistoryId) ?? null
     : null
+  const activeStep = module?.dagSteps.find((step) => step.status === 'running' || step.status === 'waiting_resource' || step.isActive)
+    ?? module?.dagSteps.find((step) => step.status === 'error')
 
   const statusColor = module
     ? module.status === 'running' ? 'text-emerald-400'
@@ -350,8 +352,16 @@ export default function LabModuleDetail() {
         <>
           {/* 顶部：3D 实验柜 + 状态概览 */}
           <div className="shrink-0 px-3 pb-3">
-            <div className="grid grid-cols-[38%_1fr] gap-3">
-              <LabCabinet3D module={module} interactive autoRotate={false} height={248} />
+            <div className="grid grid-cols-[43%_1fr] gap-3">
+              <LabCabinet3D
+                module={module}
+                interactive
+                autoRotate={false}
+                height={286}
+                currentStepId={activeStep?.id}
+                currentStepName={activeStep?.name}
+                dagSteps={module.dagSteps}
+              />
               <div className="flex min-w-0 flex-col rounded border border-white/10 bg-black/25 p-3">
                 <div className="mb-3 flex items-start gap-3">
                   <span className="text-2xl">{module.icon}</span>

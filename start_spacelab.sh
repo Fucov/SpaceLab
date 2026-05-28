@@ -51,40 +51,175 @@ fi
 mkdir -p logs
 
 # 5. 检查端口是否被占用
-check_port() {
-    if lsof -i:$1 >/dev/null 2>&1; then
-        return 0
-    else
-        return 1
+port_pids() {
+    local PORT=$1
+    local PIDS=""
+
+    if command -v lsof >/dev/null 2>&1; then
+        PIDS="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
     fi
+
+    if [ -z "$PIDS" ] && command -v ss >/dev/null 2>&1; then
+        PIDS="$(ss -ltnp 2>/dev/null \
+            | awk -v port="$PORT" '$4 ~ ":" port "$" {print}' \
+            | grep -o 'pid=[0-9]*' \
+            | cut -d= -f2 \
+            | sort -u || true)"
+    fi
+
+    if [ -z "$PIDS" ] && command -v fuser >/dev/null 2>&1; then
+        PIDS="$(fuser -n tcp "$PORT" 2>/dev/null | tr ' ' '\n' || true)"
+    fi
+
+    echo "$PIDS" | awk 'NF && !seen[$0]++'
+}
+
+check_port() {
+    local PORT=$1
+
+    if [ -n "$(port_pids "$PORT")" ]; then
+        return 0
+    fi
+
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | awk -v port="$PORT" '$4 ~ ":" port "$" {found=1} END {exit found ? 0 : 1}'
+        return $?
+    fi
+
+    return 1
+}
+
+http_reachable() {
+    local PORT=$1
+    local PATH_SUFFIX=${2:-/}
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time 2 "http://127.0.0.1:${PORT}${PATH_SUFFIX}" >/dev/null 2>&1
+        return $?
+    fi
+
+    return 1
+}
+
+kill_port() {
+    local PORT=$1
+    local NAME=$2
+    local PIDS
+    PIDS=$(port_pids "$PORT" | tr '\n' ' ')
+    if [ -n "$PIDS" ]; then
+        echo -e "${YELLOW}端口 $PORT 已被占用，正在清理旧的 ${NAME} 进程: $PIDS${NC}"
+        kill $PIDS 2>/dev/null
+        sleep 1
+        PIDS=$(port_pids "$PORT" | tr '\n' ' ')
+        if [ -n "$PIDS" ]; then
+            kill -9 $PIDS 2>/dev/null
+            sleep 1
+        fi
+    elif check_port "$PORT"; then
+        echo -e "${RED}端口 $PORT 被占用，但无法识别 ${NAME} 进程 PID${NC}"
+    fi
+}
+
+kill_webui_processes() {
+    local PIDS
+    PIDS=""
+    for PID in $(pgrep -f "$SCRIPT_DIR/lightrag_webui/node_modules/.bin/vite" 2>/dev/null); do
+        PIDS="$PIDS $PID"
+        PPID_OF_PID=$(ps -o ppid= -p "$PID" 2>/dev/null | tr -d ' ')
+        if [ -n "$PPID_OF_PID" ]; then
+            PIDS="$PIDS $PPID_OF_PID"
+        fi
+    done
+    for PID in $(pgrep -f "npm run dev" 2>/dev/null); do
+        CWD=$(readlink "/proc/$PID/cwd" 2>/dev/null || true)
+        if [ "$CWD" = "$SCRIPT_DIR/lightrag_webui" ]; then
+            PIDS="$PIDS $PID"
+        fi
+    done
+    PIDS=$(echo "$PIDS" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')
+    if [ -n "$PIDS" ]; then
+        echo -e "${YELLOW}正在清理残留 WebUI/Vite 进程: $PIDS${NC}"
+        kill $PIDS 2>/dev/null
+        sleep 1
+        for PID in $PIDS; do
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null
+            fi
+        done
+    fi
+}
+
+wait_for_port() {
+    local PORT=$1
+    local PATH_SUFFIX=${2:-/}
+    local PID=${3:-}
+    local RETRY=${4:-40}
+    while [ $RETRY -gt 0 ]; do
+        if check_port "$PORT" || http_reachable "$PORT" "$PATH_SUFFIX"; then
+            return 0
+        fi
+        if [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null; then
+            return 1
+        fi
+        sleep 0.5
+        RETRY=$((RETRY - 1))
+    done
+    return 1
 }
 
 # 6. 启动后端 API 服务器
 echo -e "\n${CYAN}>>> 启动后端 API 服务器...${NC}"
 
-if check_port 9621; then
-    echo -e "${YELLOW}端口 9621 已被占用，跳过启动 API 服务器${NC}"
-else
-    nohup python -c "from lightrag.api.lightrag_server import main; main()" \
-        > logs/api_server.log 2>&1 &
-    API_PID=$!
-    echo $API_PID > .api_server.pid
+if check_port 9621 || http_reachable 9621 "/docs"; then
+    kill_port 9621 "API"
+fi
+
+if check_port 9621 || http_reachable 9621 "/docs"; then
+    echo -e "${RED}错误: 端口 9621 仍被占用，无法启动 API${NC}"
+    echo -e "${YELLOW}如果 ss/lsof 查不到 PID，这通常表示服务运行在宿主机、WSL 转发层或其他命名空间中。${NC}"
+    exit 1
+fi
+
+setsid python -c "from lightrag.api.lightrag_server import main; main()" \
+    > logs/api_server.log 2>&1 &
+API_PID=$!
+echo "$API_PID" > .api_server.pid
+if wait_for_port 9621 "/docs" "$API_PID" 80; then
     echo -e "${GREEN}✓ API 服务器已启动 (PID: $API_PID)${NC}"
     echo -e "   API 文档: http://localhost:9621/docs"
+else
+    echo -e "${RED}错误: API 服务器未能在 9621 启动，请查看 logs/api_server.log${NC}"
+    rm -f .api_server.pid
+    exit 1
 fi
 
 # 7. 启动 WebUI 开发服务器
 echo -e "\n${CYAN}>>> 启动 WebUI 开发服务器...${NC}"
 
-if check_port 5173; then
-    echo -e "${YELLOW}端口 5173 已被占用，跳过启动 WebUI${NC}"
-else
-    cd lightrag_webui
-    nohup npm run dev > ../logs/webui.log 2>&1 &
-    WEBUI_PID=$!
-    echo $WEBUI_PID > ../.webui.pid
+kill_webui_processes
+
+if check_port 5173 || http_reachable 5173 "/webui/"; then
+    kill_port 5173 "WebUI"
+fi
+
+if check_port 5173 || http_reachable 5173 "/webui/"; then
+    echo -e "${RED}错误: 端口 5173 仍被占用，无法启动 WebUI${NC}"
+    echo -e "${YELLOW}如果 ss/lsof 查不到 PID，这通常表示旧 Vite 服务运行在宿主机、WSL 转发层或其他命名空间中。${NC}"
+    exit 1
+fi
+
+cd lightrag_webui
+setsid npm run dev -- --host 0.0.0.0 --port 5173 --strictPort > ../logs/webui.log 2>&1 &
+WEBUI_PID=$!
+echo "$WEBUI_PID" > ../.webui.pid
+cd "$SCRIPT_DIR"
+
+if wait_for_port 5173 "/webui/" "$WEBUI_PID" 40; then
     echo -e "${GREEN}✓ WebUI 服务器已启动 (PID: $WEBUI_PID)${NC}"
-    cd "$SCRIPT_DIR"
+else
+    echo -e "${RED}错误: WebUI 未能在 5173 启动，请查看 logs/webui.log${NC}"
+    rm -f .webui.pid
+    exit 1
 fi
 
 # 8. 等待服务启动
