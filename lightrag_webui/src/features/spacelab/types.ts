@@ -1,5 +1,5 @@
 /**
- * AstroAgent OS - 核心类型定义
+ * 天宫智能助手 - 核心类型定义
  * 定义了所有实验舱、任务、权限、仲裁等业务实体的数据结构
  */
 
@@ -179,6 +179,54 @@ export interface ChatMessage {
   userQuery?: string
   /** 关联的 DAG 步骤数据（用于实验设计） */
   dagSteps?: DagStepDetail[]
+  /** 对话内附件：只用于当前对话任务，不进入 RAG 知识库 */
+  attachments?: ChatAttachment[]
+  /** 对话内数据处理报告 */
+  dataReport?: DataAnalysisReport
+}
+
+export interface ChatAttachment {
+  id: string
+  name: string
+  size: number
+  type: string
+  text?: string
+}
+
+export interface DataSeriesPoint {
+  x: string
+  values: Record<string, number>
+}
+
+export interface DataColumnStats {
+  column: string
+  count: number
+  mean: number
+  std: number
+  min: number
+  q25: number
+  median: number
+  q75: number
+  max: number
+}
+
+export interface DataAnalysisReport {
+  fileName: string
+  rowCount: number
+  columns: string[]
+  numericColumns: string[]
+  operations: string[]
+  summary: {
+    mean: number
+    max: number
+    min: number
+  }
+  stats: DataColumnStats[]
+  chart: {
+    xColumn: string
+    yColumns: string[]
+    points: DataSeriesPoint[]
+  }
 }
 
 /** 对话版本快照 */

@@ -1,5 +1,5 @@
 /**
- * AstroAgent OS - Zustand 状态管理
+ * 天宫智能助手 - Zustand 状态管理
  *
  * 核心设计原则：平板端的执行草稿状态变化后，通过 Zustand 同步到全局状态，
  * 大屏侧的 DAG 图通过订阅 labModules 中对应舱体的 dagSteps 变化来响应。

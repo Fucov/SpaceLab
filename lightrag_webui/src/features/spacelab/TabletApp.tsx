@@ -1,5 +1,5 @@
 /**
- * AstroAgent OS - 平板终端 (HITL 交互界面)
+ * 天宫智能助手 - 平板终端 (HITL 交互界面)
  *
  * 核心架构：
  * - 左侧栏（独立滚动）：会话列表 + 活跃实验追踪
@@ -20,7 +20,7 @@ import { DagEditor } from './DagEditor'
 import ExperimentResultViewer from './ExperimentResultViewer'
 import { UploadButton } from './DocumentPanel'
 import { detectSkill, parseDagStepsFromText } from './skills'
-import type { Conversation, ChatMessage, HistoryExperiment } from './types'
+import type { Conversation, ChatMessage, HistoryExperiment, ChatAttachment, DataAnalysisReport, DataColumnStats } from './types'
 import {
   TabletIcon, FlaskConical, ArrowLeftIcon,
   BookOpen, X,
@@ -29,6 +29,11 @@ import {
   BotMessageSquare,
   RotateCcw,
   CheckCircle,
+  Paperclip,
+  FileSpreadsheet,
+  BarChart3,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -67,7 +72,7 @@ function isLegacyMonitorConversation(conv: Conversation) {
 
 const LOCAL_RESPONSES: Record<string, { reply: string; hasDag?: boolean; dagModuleId?: string }> = {
   default: {
-    reply: '我已收到您的消息。请选择以下操作：\n\n1. **设计新实验** — 告诉我您想做的实验内容\n2. **查看历史数据** — 点击左侧历史数据卡片\n3. **查看活跃实验** — 左侧栏底部显示当前运行中的实验\n4. **修改参数** — 在执行草稿中调整参数后授权\n\n如需接入真实 LLM，请确保 LightRAG 服务在端口 9621 运行。',
+    reply: '我已收到您的消息。请选择以下操作：\n\n1. **设计新实验** — 告诉我您想做的实验内容\n2. **查看历史数据** — 点击左侧历史数据卡片\n3. **查看活跃实验** — 左侧栏底部显示当前运行中的实验\n4. **修改参数** — 在执行草稿中调整参数后授权\n\n如需接入真实 LLM，请确保后端服务在端口 9621 运行。',
   },
   combustion: {
     reply: '根据燃烧科学舱当前状态（已完成），我可以帮您设计下一个燃烧实验。\n\n**壬烷液滴微重力燃烧**是当前最成熟的燃烧研究方向。典型参数：\n- 环境压力：1 atm\n- O₂浓度：21%（可调至 50%）\n- 液滴初始直径：2.0 mm\n- 点火方式：激光触发\n\n是否需要我生成详细的实验步骤设计？',
@@ -102,6 +107,285 @@ function getLocalResponse(query: string) {
   if (q.includes('材料') || q.includes('金属') || q.includes('玻璃') || q.includes('material')) return LOCAL_RESPONSES.material
   if (q.includes('观测') || q.includes('遥感') || q.includes('光谱') || q.includes('observe')) return LOCAL_RESPONSES.observe
   return LOCAL_RESPONSES.default
+}
+
+// ================================================================
+// 对话内附件数据处理（不进入 RAG 知识库）
+// ================================================================
+
+const DATA_PROCESSING_KEYWORDS = ['绘图', '画图', '作图', '可视化', '统计', '分析', '降噪', '滤波', '平滑', '均值', '方差', '最大值', '最小值']
+
+function shouldRunDataProcessing(query: string) {
+  const normalized = query.toLowerCase()
+  return DATA_PROCESSING_KEYWORDS.some((keyword) => normalized.includes(keyword.toLowerCase()))
+}
+
+function formatBytes(size: number) {
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+function readFileAsText(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
+function splitDelimitedLine(line: string, delimiter: string) {
+  const cells: string[] = []
+  let current = ''
+  let quoted = false
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+    const next = line[i + 1]
+    if (char === '"' && quoted && next === '"') {
+      current += '"'
+      i++
+    } else if (char === '"') {
+      quoted = !quoted
+    } else if (char === delimiter && !quoted) {
+      cells.push(current.trim())
+      current = ''
+    } else {
+      current += char
+    }
+  }
+  cells.push(current.trim())
+  return cells
+}
+
+function parseTable(text: string) {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (lines.length < 2) return null
+  const delimiter = lines[0].includes('\t') ? '\t' : ','
+  const columns = splitDelimitedLine(lines[0], delimiter).map((c, i) => c || `COL_${i + 1}`)
+  const rows = lines.slice(1).map((line) => splitDelimitedLine(line, delimiter))
+  return { columns, rows }
+}
+
+function percentile(sorted: number[], p: number) {
+  if (sorted.length === 0) return 0
+  const index = (sorted.length - 1) * p
+  const lower = Math.floor(index)
+  const upper = Math.ceil(index)
+  if (lower === upper) return sorted[lower]
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower)
+}
+
+function movingAverage(values: number[], windowSize = 7) {
+  const half = Math.floor(windowSize / 2)
+  return values.map((_, index) => {
+    const start = Math.max(0, index - half)
+    const end = Math.min(values.length, index + half + 1)
+    const slice = values.slice(start, end)
+    return slice.reduce((sum, value) => sum + value, 0) / slice.length
+  })
+}
+
+function makeStats(column: string, values: number[]): DataColumnStats {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, values.length - 1)
+  return {
+    column,
+    count: values.length,
+    mean,
+    std: Math.sqrt(variance),
+    min: sorted[0],
+    q25: percentile(sorted, 0.25),
+    median: percentile(sorted, 0.5),
+    q75: percentile(sorted, 0.75),
+    max: sorted[sorted.length - 1],
+  }
+}
+
+function buildDataAnalysisReport(attachment: ChatAttachment, query: string): DataAnalysisReport | null {
+  const text = attachment.text || ''
+  const table = parseTable(text)
+  if (!table) return null
+
+  const numericValues = new Map<string, number[]>()
+  table.columns.forEach((column, columnIndex) => {
+    const values = table.rows
+      .map((row) => Number.parseFloat(String(row[columnIndex] ?? '').replace(/,/g, '')))
+      .filter((value) => Number.isFinite(value))
+    if (values.length >= Math.max(3, table.rows.length * 0.5)) {
+      numericValues.set(column, values)
+    }
+  })
+
+  const numericColumns = [...numericValues.keys()]
+  if (numericColumns.length === 0) return null
+
+  const denoise = /降噪|滤波|平滑/i.test(query)
+  const operations = [
+    '字段识别',
+    '基础统计',
+    denoise ? '移动平均降噪' : '原始序列保留',
+    /绘图|画图|作图|可视化/i.test(query) ? '趋势绘图' : '数据预览',
+  ]
+
+  const stats = numericColumns.map((column) => {
+    const values = numericValues.get(column) || []
+    return makeStats(column, denoise ? movingAverage(values) : values)
+  })
+
+  const xColumn = table.columns.find((column) => /time|timestamp|时间/i.test(column)) || table.columns[0]
+  const chartColumns = numericColumns
+    .filter((column) => column !== xColumn)
+    .slice(0, 2)
+  const yColumns = chartColumns.length > 0 ? chartColumns : numericColumns.slice(0, 2)
+  const maxPoints = 140
+  const step = Math.max(1, Math.floor(table.rows.length / maxPoints))
+  const chartSeries = new Map<string, number[]>()
+  yColumns.forEach((column) => {
+    const values = numericValues.get(column) || []
+    chartSeries.set(column, denoise ? movingAverage(values) : values)
+  })
+  const xColumnIndex = table.columns.indexOf(xColumn)
+  const points = table.rows
+    .map((row, index) => ({ row, index }))
+    .filter((item) => item.index % step === 0)
+    .slice(0, maxPoints)
+    .map(({ row, index }) => ({
+      x: String(row[xColumnIndex] ?? index),
+      values: Object.fromEntries(yColumns.map((column) => [column, chartSeries.get(column)?.[index] ?? 0])),
+    }))
+
+  const featured = stats.find((item) => !/time|timestamp|时间/i.test(item.column)) || stats[0]
+  return {
+    fileName: attachment.name,
+    rowCount: table.rows.length,
+    columns: table.columns,
+    numericColumns,
+    operations,
+    summary: {
+      mean: featured.mean,
+      max: Math.max(...stats.map((item) => item.max)),
+      min: Math.min(...stats.map((item) => item.min)),
+    },
+    stats,
+    chart: { xColumn, yColumns, points },
+  }
+}
+
+function DataAnalysisReportCard({ report }: { report: DataAnalysisReport }) {
+  const chartWidth = 760
+  const chartHeight = 220
+  const padding = { left: 44, right: 18, top: 16, bottom: 26 }
+  const colors = ['#38bdf8', '#fb7185']
+  const allValues = report.chart.points.flatMap((point) => report.chart.yColumns.map((column) => point.values[column] ?? 0))
+  const min = Math.min(...allValues, 0)
+  const max = Math.max(...allValues, 1)
+  const range = max - min || 1
+  const xScale = (index: number) => padding.left + (index / Math.max(1, report.chart.points.length - 1)) * (chartWidth - padding.left - padding.right)
+  const yScale = (value: number) => padding.top + (1 - (value - min) / range) * (chartHeight - padding.top - padding.bottom)
+  const pathFor = (column: string) => report.chart.points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${xScale(index).toFixed(1)} ${yScale(point.values[column] ?? 0).toFixed(1)}`)
+    .join(' ')
+
+  const rows: Array<{ label: string; key: keyof DataColumnStats }> = [
+    { label: 'count', key: 'count' },
+    { label: 'mean', key: 'mean' },
+    { label: 'std', key: 'std' },
+    { label: 'min', key: 'min' },
+    { label: '25%', key: 'q25' },
+    { label: '50%', key: 'median' },
+    { label: '75%', key: 'q75' },
+    { label: 'max', key: 'max' },
+  ]
+
+  const formatValue = (value: number) => {
+    if (!Number.isFinite(value)) return '--'
+    if (Math.abs(value) >= 1000) return value.toFixed(0)
+    if (Math.abs(value) >= 10) return value.toFixed(2)
+    return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
+      <div className="flex items-center gap-2 mb-3">
+        <BarChart3 className="w-5 h-5 text-blue-500" />
+        <div>
+          <div className="text-base font-bold text-gray-800">统计分析报告</div>
+          <div className="text-[11px] text-gray-400">
+            {report.fileName} · {report.rowCount} 行 · {report.operations.join(' / ')}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        {[
+          { label: '平均值', value: report.summary.mean },
+          { label: '最大值', value: report.summary.max },
+          { label: '最小值', value: report.summary.min },
+        ].map((item) => (
+          <div key={item.label} className="rounded-lg bg-gray-50 px-3 py-2">
+            <div className="text-[11px] text-gray-500">{item.label}</div>
+            <div className="text-2xl font-semibold text-gray-800">{formatValue(item.value)}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-gray-100 mb-4">
+        <table className="min-w-full text-xs">
+          <thead className="bg-gray-50 text-gray-500">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">指标</th>
+              {report.stats.slice(0, 5).map((stat) => (
+                <th key={stat.column} className="px-3 py-2 text-right font-medium">{stat.column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {rows.map((row) => (
+              <tr key={row.label}>
+                <td className="px-3 py-2 font-medium text-gray-500">{row.label}</td>
+                {report.stats.slice(0, 5).map((stat) => (
+                  <td key={`${stat.column}-${row.label}`} className="px-3 py-2 text-right font-mono text-gray-700">
+                    {formatValue(Number(stat[row.key]))}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+        <div className="mb-2 flex items-center gap-3 text-[11px] text-gray-500">
+          <span>横轴：{report.chart.xColumn}</span>
+          {report.chart.yColumns.map((column, index) => (
+            <span key={column} className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
+              {column}
+            </span>
+          ))}
+        </div>
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-56 w-full">
+          {[0, 1, 2, 3].map((tick) => {
+            const y = padding.top + tick * ((chartHeight - padding.top - padding.bottom) / 3)
+            const value = max - tick * (range / 3)
+            return (
+              <g key={tick}>
+                <line x1={padding.left} x2={chartWidth - padding.right} y1={y} y2={y} stroke="#e5e7eb" strokeWidth="1" />
+                <text x={padding.left - 8} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{formatValue(value)}</text>
+              </g>
+            )
+          })}
+          {report.chart.yColumns.map((column, index) => (
+            <path key={column} d={pathFor(column)} fill="none" stroke={colors[index % colors.length]} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+          ))}
+          <line x1={padding.left} x2={chartWidth - padding.right} y1={chartHeight - padding.bottom} y2={chartHeight - padding.bottom} stroke="#cbd5e1" />
+          <line x1={padding.left} x2={padding.left} y1={padding.top} y2={chartHeight - padding.bottom} stroke="#cbd5e1" />
+        </svg>
+      </div>
+    </div>
+  )
 }
 
 // ================================================================
@@ -270,6 +554,17 @@ function ChatMessageItem({ msg, convId, onRetry, retryCount, onDagConfirm, onDag
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl rounded-br-md bg-blue-600 text-white px-4 py-2.5 text-sm leading-relaxed shadow-sm">
           <div className="whitespace-pre-wrap">{msg.content}</div>
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {msg.attachments.map((file) => (
+                <div key={file.id} className="flex items-center gap-2 rounded-lg bg-white/15 px-2 py-1.5 text-xs text-blue-50">
+                  <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  <span className="text-blue-100/80">{formatBytes(file.size)}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="text-[10px] text-blue-200 mt-1 text-right">{msg.timestamp}</div>
         </div>
       </div>
@@ -309,6 +604,8 @@ function ChatMessageItem({ msg, convId, onRetry, retryCount, onDagConfirm, onDag
         <div className="rounded-2xl rounded-bl-md bg-gray-100 px-4 py-2.5 text-sm leading-relaxed shadow-sm">
           <MarkdownRenderer content={msg.content} isStreaming={!msg.done} />
         </div>
+
+        {msg.dataReport && <DataAnalysisReportCard report={msg.dataReport} />}
 
         {/* 内嵌 DAG 编辑器（从 LLM 响应中解析的步骤） */}
         {msg.dagSteps && msg.dagSteps.length > 0 && (
@@ -370,9 +667,11 @@ function ChatArea() {
   const [retryCounts, setRetryCounts] = useState<Record<string, number> >({})
   const [showDagEditor, setShowDagEditor] = useState(false)
   const [executionPlan, setExecutionPlan] = useState<string | null>(null)
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([])
   const messages = conv?.messages ?? []
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 自动滚动到底部
   useEffect(() => {
@@ -408,23 +707,68 @@ function ChatArea() {
     loadDocs()
   }, [addDocument])
 
+  const handleAttachmentSelect = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    if (files.length === 0) return
+    try {
+      const attachments = await Promise.all(files.map(async (file) => ({
+        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        text: await readFileAsText(file),
+      })))
+      setPendingAttachments((prev) => [...prev, ...attachments].slice(0, 4))
+      toast.success(`已添加 ${attachments.length} 个对话附件`)
+    } catch {
+      toast.error('文件读取失败，请确认文件为文本、CSV 或 TSV 格式')
+    } finally {
+      event.target.value = ''
+    }
+  }, [])
+
   const handleSubmit = useCallback(async (e?: React.FormEvent, retryQuery?: string, retryMsgId?: string) => {
     if (e) e.preventDefault()
     if (!activeId) return
 
     const query = retryQuery || input.trim()
+    const attachmentsForMessage = retryQuery ? [] : pendingAttachments
     if (!query.trim() || isLoading) return
 
     setIsLoading(true)
-    if (!retryQuery) setInput('')
+    if (!retryQuery) {
+      setInput('')
+      setPendingAttachments([])
+    }
 
     const userMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
       content: query,
       timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      attachments: attachmentsForMessage,
     }
     addMsg(activeId, userMsg)
+
+    if (!retryQuery && attachmentsForMessage.length > 0 && shouldRunDataProcessing(query)) {
+      const report = attachmentsForMessage
+        .map((attachment) => buildDataAnalysisReport(attachment, query))
+        .find((item): item is DataAnalysisReport => Boolean(item))
+      const assistantMsg: ChatMessage = {
+        id: `msg-${Date.now()}-data`,
+        role: 'assistant',
+        content: report
+          ? `已通过智能体自主编程完成对 **${report.fileName}** 的分析任务。\n\n- 文件绑定：${attachmentsForMessage.map((item) => item.name).join('、')}\n- 处理流程：${report.operations.join(' → ')}\n- 结果已在下方生成统计表和趋势图。`
+          : `已收到附件：${attachmentsForMessage.map((item) => item.name).join('、')}。\n\n当前 mock 数据处理器优先支持 CSV/TSV 表格文件；请上传包含表头和数值列的数据文件后，再输入“统计、绘图、降噪”等指令。`,
+        timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+        done: true,
+        userQuery: query,
+        dataReport: report || undefined,
+      }
+      addMsg(activeId, assistantMsg)
+      setIsLoading(false)
+      return
+    }
 
     // 创建 assistant 消息占位
     const assistantMsgId = retryMsgId || `msg-${Date.now()}-ai`
@@ -485,7 +829,7 @@ function ChatArea() {
     }
 
     // 知识类问题关联实验舱
-    if (!fullContent.includes('LightRAG 服务') && conv?.kind === 'experiment') {
+    if (!fullContent.includes('后端服务') && conv?.kind === 'experiment') {
       const moduleKeywords = [
         ['combustion', '燃烧'], ['life-science', '细胞'], ['fluid-physics', '流体'],
         ['material-exp', '材料'], ['bio-experiment', '生物'], ['earth-observe', '观测'],
@@ -515,7 +859,7 @@ function ChatArea() {
       setRetryCounts((prev) => ({ ...prev, [assistantMsgId]: retryCount }))
     }
     setIsLoading(false)
-  }, [input, isLoading, activeId, conv, addMsg, appendMsg, updateMsg, setSteps, labModules, retryCounts, setExecutionPlan])
+  }, [input, pendingAttachments, isLoading, activeId, conv, addMsg, appendMsg, updateMsg, setSteps, labModules, retryCounts, setExecutionPlan])
 
   const handleDagConfirm = useCallback((plan: string) => {
     setExecutionPlan(plan)
@@ -658,7 +1002,43 @@ function ChatArea() {
 
       {/* 输入框（固定在底部） */}
       <div className="shrink-0 border-t border-gray-200 bg-white p-3">
+        {pendingAttachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {pendingAttachments.map((file) => (
+              <div key={file.id} className="flex max-w-[260px] items-center gap-1.5 rounded-lg border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700">
+                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{file.name}</span>
+                <span className="text-blue-400">{formatBytes(file.size)}</span>
+                <button
+                  type="button"
+                  onClick={() => setPendingAttachments((prev) => prev.filter((item) => item.id !== file.id))}
+                  className="ml-0.5 cursor-pointer rounded p-0.5 text-blue-300 hover:bg-blue-100 hover:text-blue-600"
+                  title="移除附件"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="flex gap-2 items-end">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".csv,.tsv,.txt,.json,text/*"
+            onChange={handleAttachmentSelect}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoading}
+            title="上传对话附件"
+            className="cursor-pointer rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-gray-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           <textarea
             ref={inputRef}
             value={input}
@@ -744,15 +1124,31 @@ export default function TabletApp() {
   const createConv = useConversationStore((s) => s.createConversation)
   const emergencyStop = useSpaceLabStore((s) => s.emergencyStop)
   const emergencyMode = useSpaceLabStore((s) => s.emergencyMode)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const activeConv = convs.find((c) => c.id === activeId)
+
+  useEffect(() => {
+    const syncFullscreen = () => setIsFullscreen(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', syncFullscreen)
+    syncFullscreen()
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen)
+  }, [])
+
+  const toggleFullscreen = async () => {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen()
+      return
+    }
+    await document.documentElement.requestFullscreen()
+  }
 
   const handleNew = useCallback((kind: Conversation['kind']) => {
     createConv(kind)
   }, [createConv])
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-white">
+    <div className="fixed inset-0 flex h-screen w-screen flex-col overflow-hidden bg-white">
       {/* 顶部导航栏（固定不滚动） */}
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4">
         <div className="flex items-center gap-3">
@@ -768,6 +1164,13 @@ export default function TabletApp() {
           <span className="text-sm font-semibold text-gray-700">天宫智能助手</span>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={toggleFullscreen}
+            className="cursor-pointer flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-100"
+          >
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            {isFullscreen ? '退出全屏' : '全屏展示'}
+          </button>
           <UploadButton />
           <button
             onClick={emergencyStop}

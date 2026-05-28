@@ -1,5 +1,5 @@
 /**
- * AstroAgent OS - 流式感知 Markdown 渲染器
+ * 天宫智能助手 - 流式感知 Markdown 渲染器
  *
  * 核心能力：
  * - 流式期间实时检测 <think> 块，增量渲染折叠面板

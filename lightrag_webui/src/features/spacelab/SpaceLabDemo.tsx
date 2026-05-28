@@ -132,7 +132,7 @@ export default function SpaceLabDemo() {
         {/* Logo / Title */}
         <div className="text-center">
           <div className="mb-2 text-sm tracking-[0.3em] text-cyan-400/60 uppercase">
-            Space Station Intelligent Agent OS
+            空间站智能实验辅助系统
           </div>
           <h1
             className="text-6xl font-bold tracking-wider"
@@ -143,18 +143,16 @@ export default function SpaceLabDemo() {
               textShadow: '0 0 60px rgba(59, 130, 246, 0.3)',
             }}
           >
-            SpaceLabOS
+            天宫智能助手
           </h1>
           <div className="mt-3 text-lg text-blue-200/40 tracking-widest">
-            太空实验室演示系统
+            面向空间站实验柜的智能体调度与科学实验辅助系统
           </div>
         </div>
 
         {/* Subtitle */}
         <p className="max-w-xl text-center text-sm leading-relaxed text-blue-300/40">
-          基于 LightRAG 知识图谱检索增强生成框架 · 双屏联动交互演示
-          <br />
-          支持实验舱实时监控 · 智能助手对话 · 知识图谱检索 · 跨屏指令联动
+          支持实验柜实时监控 · 智能助手对话 · 科学知识检索 · 跨屏指令联动
         </p>
 
         {/* Buttons */}
@@ -180,7 +178,7 @@ export default function SpaceLabDemo() {
 
         {/* Footer */}
         <div className="absolute bottom-6 text-xs text-blue-400/20 tracking-widest">
-          POWERED BY LIGHTRAG · REACT · ZUSTAND · TAILWIND CSS
+          天宫空间站 · 双屏联动交互演示
         </div>
       </div>
     </div>

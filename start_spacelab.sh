@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==========================================
-# SpaceLabOS 启动脚本
+# 天宫智能助手 启动脚本
 # 支持双屏：平板终端 + 电脑大屏
 # ==========================================
 
@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo -e "${CYAN}=========================================="
-echo -e "    SpaceLabOS 启动脚本"
+echo -e "    天宫智能助手 启动脚本"
 echo -e "==========================================${NC}"
 
 # 1. 检查虚拟环境
@@ -59,8 +59,8 @@ check_port() {
     fi
 }
 
-# 6. 启动 LightRAG API 服务器
-echo -e "\n${CYAN}>>> 启动 LightRAG API 服务器...${NC}"
+# 6. 启动后端 API 服务器
+echo -e "\n${CYAN}>>> 启动后端 API 服务器...${NC}"
 
 if check_port 9621; then
     echo -e "${YELLOW}端口 9621 已被占用，跳过启动 API 服务器${NC}"

@@ -1,26 +1,27 @@
 /**
- * 大屏主控应用（SpaceLabOS 演示大屏）
+ * 大屏主控应用（天宫智能助手 演示大屏）
  *
  * 布局说明（重构后）：
- * 左侧（20%）：算力池 + 智能体调度中心（ComputePanel） + 监控日志（AlertLog）
- * 中央（58%）：实验舱阵列矩阵 / 舱体详情（LabModuleGrid / LabModuleDetail）
- * 右侧（22%）：全站环境 + 测控网 + 电源系统 + 电力分配（EquipmentPanel）
+ * 左侧（21%）：算力与链路 + 智能体调度中心（ComputePanel） + 监控日志（AlertLog）
+ * 中央（57%）：实验舱阵列矩阵 / 舱体详情（LabModuleGrid / LabModuleDetail）
+ * 右侧（22%）：全站环境 + 电源系统 + 电力分配（EquipmentPanel）
  */
 
 import { useNavigate } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useSpaceLabStore } from './store'
 import ComputePanel from './mainScreen/ComputePanel'
 import AlertLog from './mainScreen/AlertLog'
 import LabModuleGrid from './mainScreen/LabModuleGrid'
 import LabModuleDetail from './mainScreen/LabModuleDetail'
 import EquipmentPanel from './mainScreen/EquipmentPanel'
-import { ArrowLeftIcon, MonitorIcon } from 'lucide-react'
+import { ArrowLeftIcon, Maximize2Icon, Minimize2Icon, MonitorIcon } from 'lucide-react'
 
 export default function SpaceLabApp() {
   const navigate = useNavigate()
   const selectedModuleId = useSpaceLabStore((s) => s.selectedModuleId)
   const tickTelemetry = useSpaceLabStore((s) => s.tickTelemetry)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   useEffect(() => {
     tickTelemetry()
@@ -28,9 +29,24 @@ export default function SpaceLabApp() {
     return () => window.clearInterval(id)
   }, [tickTelemetry])
 
+  useEffect(() => {
+    const syncFullscreen = () => setIsFullscreen(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', syncFullscreen)
+    syncFullscreen()
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen)
+  }, [])
+
+  const toggleFullscreen = async () => {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen()
+      return
+    }
+    await document.documentElement.requestFullscreen()
+  }
+
   return (
     <div
-      className="fixed inset-0 flex flex-col overflow-hidden"
+      className="fixed inset-0 flex h-screen w-screen flex-col overflow-hidden"
       style={{ background: 'linear-gradient(180deg, #050B14 0%, #0a1628 50%, #060d1f 100%)' }}
     >
       {/* 顶部导航栏 */}
@@ -45,7 +61,7 @@ export default function SpaceLabApp() {
           </button>
           <div className="h-4 w-px bg-blue-500/20" />
           <MonitorIcon className="w-4 h-4 text-blue-400/60" />
-          <span className="text-sm font-semibold text-blue-100 tracking-wider">SpaceLabOS 演示大屏</span>
+          <span className="text-sm font-semibold text-blue-100 tracking-wider">天宫智能助手</span>
         </div>
         <div className="flex items-center gap-3 text-[10px] text-blue-400/40">
           <span>天宫空间站 · 实验舱监控中心</span>
@@ -53,25 +69,32 @@ export default function SpaceLabApp() {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
             系统在线
           </span>
+          <button
+            onClick={toggleFullscreen}
+            className="cursor-pointer flex items-center gap-1.5 rounded border border-blue-400/25 bg-blue-400/10 px-2.5 py-1 text-[11px] font-medium text-blue-100 transition-colors hover:border-blue-300/50 hover:bg-blue-400/20"
+          >
+            {isFullscreen ? <Minimize2Icon className="h-3 w-3" /> : <Maximize2Icon className="h-3 w-3" />}
+            {isFullscreen ? '退出全屏' : '全屏展示'}
+          </button>
         </div>
       </header>
 
       {/* 主内容区 - 三栏布局 */}
-      <div className="flex flex-1 min-h-0 gap-px bg-blue-500/5">
-        {/* ========== 左侧栏（20%） ========== */}
-        <div className="flex w-[20%] min-w-[200px] flex-col gap-px">
+      <div className="flex flex-1 min-h-0 gap-2 bg-blue-500/5 p-2">
+        {/* ========== 左侧栏（21%） ========== */}
+        <div className="flex w-[21%] min-w-[220px] flex-col gap-2">
           {/* 算力池 + 智能体调度中心 */}
-          <div className="flex-1 overflow-hidden border-r border-blue-500/10 bg-blue-950/20 p-2.5">
+          <div className="flex-[1.2] overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5">
             <ComputePanel />
           </div>
           {/* 监控日志 */}
-          <div className="flex-1 overflow-hidden border-r border-t border-blue-500/10 bg-blue-950/20 p-2.5 flex flex-col min-h-0">
+          <div className="flex-1 overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5 flex flex-col min-h-0">
             <AlertLog />
           </div>
         </div>
 
-        {/* ========== 中央栏（58%） ========== */}
-        <div className="flex-1 overflow-hidden bg-blue-950/10 p-2.5">
+        {/* ========== 中央栏（57%） ========== */}
+        <div className="w-[57%] overflow-hidden rounded border border-blue-500/10 bg-blue-950/10 p-2.5">
           {/* 标题栏 */}
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-xs font-semibold tracking-wider text-blue-400/80 uppercase">
@@ -93,8 +116,8 @@ export default function SpaceLabApp() {
         </div>
 
         {/* ========== 右侧栏（22%） ========== */}
-        <div className="flex w-[22%] min-w-[220px] flex-col gap-px">
-          <div className="flex-1 overflow-hidden border-l border-blue-500/10 bg-blue-950/20 p-2.5">
+        <div className="flex w-[22%] min-w-[230px] flex-col">
+          <div className="flex-1 overflow-hidden rounded border border-blue-500/10 bg-blue-950/20 p-2.5">
             <EquipmentPanel />
           </div>
         </div>
