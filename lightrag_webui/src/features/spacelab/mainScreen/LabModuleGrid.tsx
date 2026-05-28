@@ -5,6 +5,7 @@
 import { useSpaceLabStore } from '../store'
 import type { LabModule, LabModuleStatus } from '../types'
 import { Thermometer, Gauge, Zap } from 'lucide-react'
+import LabCabinet3D from './LabCabinet3D'
 
 const statusConfig: Record<LabModuleStatus, { label: string; color: string; dot: string }> = {
   standby:   { label: '待机', color: 'text-slate-400', dot: 'bg-slate-500' },
@@ -24,78 +25,86 @@ function ModuleCard({ module, onClick }: { module: LabModule; onClick: () => voi
   return (
     <button
       onClick={onClick}
-      className="group cursor-pointer rounded-xl border border-white/10 bg-white/5 p-4 text-left transition-all hover:bg-white/10 hover:border-white/20"
+      className="group grid min-h-[178px] cursor-pointer grid-cols-[31%_1fr] gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-left transition-all hover:border-white/20 hover:bg-white/10"
     >
-      {/* 顶部行 */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2.5">
-          <span className="text-xl">{module.icon}</span>
-          <div>
-            <div className="text-sm font-bold text-slate-200 tracking-wide">{module.name}</div>
-            <div className="text-[11px] text-slate-500 mt-0.5">{module.currentTask}</div>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full ${cfg.dot} ${module.status === 'running' ? 'animate-pulse' : ''}`} />
-          <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
-        </div>
+      <div className="min-w-0 self-stretch">
+        <LabCabinet3D module={module} compact height="100%" />
       </div>
 
-      {/* 微观步骤 */}
-      {module.status === 'running' && (
-        <div className="mb-3 bg-white/5 rounded-lg px-3 py-2">
-          <div className="text-[11px] text-slate-400">
-            <span className="text-slate-500">步骤 </span>
-            <span className="font-bold text-slate-300">{currentGroup + 1}/{totalGroups}</span>
-            <span className="text-slate-500 ml-1">· </span>
-            <span className="font-semibold text-slate-300">
-              {runningSteps.length > 1
-                ? runningSteps.map((s) => s.name).join(' || ')
-                : activeStep?.name ?? '进行中'}
+      <div className="flex min-w-0 flex-col">
+        {/* 顶部行 */}
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-base">{module.icon}</span>
+              <div className="truncate text-sm font-bold tracking-wide text-slate-200">{module.name}</div>
+            </div>
+            <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-slate-500">{module.currentTask}</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className={`h-2 w-2 rounded-full ${cfg.dot} ${module.status === 'running' ? 'animate-pulse' : ''}`} />
+            <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
+          </div>
+        </div>
+
+        {/* 微观步骤 */}
+        {module.status === 'running' && (
+          <div className="mb-2 rounded bg-white/5 px-2.5 py-1.5">
+            <div className="line-clamp-1 text-[11px] text-slate-400">
+              <span className="text-slate-500">步骤 </span>
+              <span className="font-bold text-slate-300">{currentGroup + 1}/{totalGroups}</span>
+              <span className="ml-1 text-slate-500">· </span>
+              <span className="font-semibold text-slate-300">
+                {runningSteps.length > 1
+                  ? runningSteps.map((s) => s.name).join(' || ')
+                  : activeStep?.name ?? '进行中'}
+              </span>
+            </div>
+          </div>
+        )}
+        {module.status === 'error' && (
+          <div className="mb-2 rounded border border-red-500/20 bg-red-500/10 px-2.5 py-1.5">
+            <span className="line-clamp-1 text-[11px] text-red-400">
+              异常：{module.dagSteps.find((s) => s.status === 'error')?.name}
             </span>
           </div>
+        )}
+
+        <div className="mt-auto">
+          {/* 传感器 */}
+          <div className="mb-2 grid grid-cols-3 gap-1.5 text-[11px]">
+            <span className="flex items-center gap-1 rounded bg-white/5 px-1.5 py-1 text-slate-400">
+              <Thermometer className="h-3 w-3 text-orange-400/70" />
+              <span className="font-mono font-semibold text-slate-300">{module.temperature.toFixed(1)}°</span>
+            </span>
+            <span className="flex items-center gap-1 rounded bg-white/5 px-1.5 py-1 text-slate-400">
+              <Gauge className="h-3 w-3 text-blue-400/70" />
+              <span className="font-mono font-semibold text-slate-300">{module.pressure.toFixed(0)}kPa</span>
+            </span>
+            <span className="flex items-center gap-1 rounded bg-white/5 px-1.5 py-1 text-slate-400">
+              <Zap className="h-3 w-3 text-yellow-400/70" />
+              <span className="font-mono font-semibold text-slate-300">{module.power}W</span>
+            </span>
+          </div>
+
+          {/* 进度条 */}
+          <div className="mb-1.5 h-1.5 overflow-hidden rounded-full bg-white/5">
+            <div
+              className={`h-full rounded-full transition-all ${
+                module.status === 'error' ? 'bg-red-500'
+                  : module.status === 'completed' ? 'bg-blue-500'
+                  : 'bg-slate-500'
+              }`}
+              style={{ width: `${module.progress}%` }}
+            />
+          </div>
+
+          {/* 底部 */}
+          <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+            <span className="font-mono">{module.progress}%</span>
+            <span className="truncate">ETA: {module.eta}</span>
+          </div>
         </div>
-      )}
-      {module.status === 'error' && (
-        <div className="mb-3 bg-red-500/10 rounded-lg px-3 py-2 border border-red-500/20">
-          <span className="text-[11px] text-red-400">
-            异常：{module.dagSteps.find((s) => s.status === 'error')?.name}
-          </span>
-        </div>
-      )}
-
-      {/* 传感器 */}
-      <div className="flex items-center gap-3 mb-3 text-[11px]">
-        <span className="flex items-center gap-1 text-slate-400">
-          <Thermometer className="w-3 h-3 text-orange-400/70" />
-          <span className="font-mono font-semibold text-slate-300">{module.temperature.toFixed(1)}°</span>
-        </span>
-        <span className="flex items-center gap-1 text-slate-400">
-          <Gauge className="w-3 h-3 text-blue-400/70" />
-          <span className="font-mono font-semibold text-slate-300">{module.pressure.toFixed(0)}kPa</span>
-        </span>
-        <span className="flex items-center gap-1 text-slate-400">
-          <Zap className="w-3 h-3 text-yellow-400/70" />
-          <span className="font-mono font-semibold text-slate-300">{module.power}W</span>
-        </span>
-      </div>
-
-      {/* 进度条 */}
-      <div className="h-1.5 bg-white/5 rounded-full mb-2 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${
-            module.status === 'error' ? 'bg-red-500'
-              : module.status === 'completed' ? 'bg-blue-500'
-              : 'bg-slate-500'
-          }`}
-          style={{ width: `${module.progress}%` }}
-        />
-      </div>
-
-      {/* 底部 */}
-      <div className="flex items-center justify-between text-[11px] text-slate-500">
-        <span className="font-mono">{module.progress}%</span>
-        <span>ETA: {module.eta}</span>
       </div>
     </button>
   )
@@ -112,7 +121,7 @@ export default function LabModuleGrid() {
 
   return (
     <div className="h-full overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-2.5">
         {sorted.map((mod) => (
           <ModuleCard key={mod.id} module={mod} onClick={() => selectModule(mod.id)} />
         ))}

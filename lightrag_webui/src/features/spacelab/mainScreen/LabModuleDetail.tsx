@@ -9,6 +9,7 @@ import { useMemo } from 'react'
 import type { LabModule, DagStep, HistoryExperiment } from '../types'
 import { ArrowLeftIcon, BarChart3, ChevronDown, ChevronUp, ExternalLink, FileText } from 'lucide-react'
 import ExperimentResultViewer from '../ExperimentResultViewer'
+import LabCabinet3D from './LabCabinet3D'
 
 // ================================================================
 // 子组件 1：传感器网格
@@ -347,24 +348,56 @@ export default function LabModuleDetail() {
 
       {module && (
         <>
-          {/* 标题 */}
+          {/* 顶部：3D 实验柜 + 状态概览 */}
           <div className="shrink-0 px-3 pb-3">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">{module.icon}</span>
-              <div>
-                <div className="text-sm font-bold text-white">{module.name}</div>
-                <div className="text-xs text-white/50">{module.currentTask}</div>
-              </div>
-              <div className="ml-auto text-right">
-                <div className={`text-xs font-bold ${statusColor}`}>{statusLabel}</div>
-                <div className="text-xs text-white/30">{module.progress}%</div>
+            <div className="grid grid-cols-[38%_1fr] gap-3">
+              <LabCabinet3D module={module} interactive autoRotate={false} height={248} />
+              <div className="flex min-w-0 flex-col rounded border border-white/10 bg-black/25 p-3">
+                <div className="mb-3 flex items-start gap-3">
+                  <span className="text-2xl">{module.icon}</span>
+                  <div className="min-w-0">
+                    <div className="text-base font-bold text-white">{module.name}</div>
+                    <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/50">{module.currentTask}</div>
+                  </div>
+                  <div className="ml-auto shrink-0 text-right">
+                    <div className={`text-xs font-bold ${statusColor}`}>{statusLabel}</div>
+                    <div className="text-xs text-white/30">{module.progress}%</div>
+                  </div>
+                </div>
+
+                <SensorGrid module={module} />
+
+                <div className="mt-3">
+                  <div className="mb-1 flex items-center justify-between text-[10px] text-white/35">
+                    <span>当前进度</span>
+                    <span>ETA: {module.eta}</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-white/5">
+                    <div
+                      className={`h-full rounded-full ${
+                        module.status === 'error'
+                          ? 'bg-red-500'
+                          : module.status === 'completed'
+                          ? 'bg-blue-500'
+                          : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${module.progress}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded border border-white/10 bg-white/[0.04] px-3 py-2">
+                  <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-white/30">当前任务</div>
+                  <div className="text-xs leading-relaxed text-white/75">{module.currentTask}</div>
+                </div>
+
+                {module.status === 'error' && (
+                  <div className="mt-2 rounded border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                    异常说明：{module.dagSteps.find((s) => s.status === 'error')?.name ?? '实验步骤异常'}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-
-          {/* 传感器 */}
-          <div className="shrink-0 px-3 pb-3">
-            <SensorGrid module={module} />
           </div>
 
           {/* DAG */}
